@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+
+.vscode/
+
+calibration/
+captures/
+markers/
+outputs/
+
+*.pdf
+*.indd
+*.gh
