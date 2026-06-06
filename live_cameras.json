@@ -1,0 +1,10 @@
+{
+  "cameras": [
+    {
+      "name": "cam_a",
+      "camera": "zed1",
+      "intrinsics": "calibration/zed1_left_intrinsics.json",
+      "extrinsic": "calibration/cam_a_extrinsic.json"
+    }
+  ]
+}

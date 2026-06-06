@@ -1,4 +1,5 @@
 import argparse
+import base64
 import csv
 import json
 import math
@@ -7,8 +8,6 @@ import time
 from pathlib import Path
 
 import numpy as np
-
-from camera_serials import resolve_camera_serial_number
 
 try:
     import cv2
@@ -117,53 +116,7 @@ def create_marker_bitmap(dictionary_name, marker_id, marker_px):
     return cv2.aruco.drawMarker(dictionary, marker_id, marker_px)
 
 
-def create_marker_panel(dictionary_name, marker_id, marker_px, label, border_px=None):
-    marker = create_marker_bitmap(dictionary_name, marker_id, marker_px)
-    if border_px is None:
-        border_px = max(12, marker_px // 8)
-    
-    label_height_px = max(28, marker_px // 4)
-    
-    # 页面尺寸：标记 + 四周边距
-    page_w = marker_px + border_px * 4
-    page_h = marker_px + border_px * 4  # 先设基准，后面可能调整
-    
-    page = np.full((page_h, page_w), 255, dtype=np.uint8)
-    page[border_px : border_px + marker_px, border_px*2 : border_px*2 + marker_px] = marker
-
-    font_scale = max(0.35, marker_px / 160.0)
-    thickness = max(1, marker_px // 120)
-    
-    # 文字可用宽度（左右各留 border_px*2）
-    available_width = page_w - border_px * 4
-    text_size, baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
-    
-    # 如果文字太宽，自动缩小
-    if text_size[0] > available_width and text_size[0] > 0:
-        font_scale *= (available_width / text_size[0]) * 0.95
-        text_size, baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
-    
-    # 水平居中
-    text_x = (page_w - text_size[0]) // 2
-    # 垂直位置：标记底部 + 小间距
-    text_y = border_px + marker_px + text_size[1] + text_size[1]  // 3
-    
-    # 检查是否超出页面，必要时扩展
-    if text_y + border_px > page_h:
-        new_page_h = text_y + border_px + baseline + 4 
-        new_page = np.full((new_page_h, page_w), 255, dtype=np.uint8)
-        new_page[:page_h, :page_w] = page
-        page = new_page
-    
-    cv2.putText(
-        page, label, (text_x, text_y),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        font_scale, 0, thickness, cv2.LINE_AA,
-    )
-    return page, border_px
-
-
-def create_ground_marker_image(dictionary_name, marker_id, marker_px, page_px, label):
+def create_marker_image(dictionary_name, marker_id, marker_px, page_px, label):
     marker = create_marker_bitmap(dictionary_name, marker_id, marker_px)
     page = np.full((page_px, page_px), 255, dtype=np.uint8)
     offset = (page_px - marker_px) // 2
@@ -181,93 +134,23 @@ def create_ground_marker_image(dictionary_name, marker_id, marker_px, page_px, l
     return page
 
 
-def marker_panel_anchor_offset(marker_px, border_px, anchor_corner):
-    corner_offset = {
-        "top_left": (border_px, border_px),
-        "top_right": (border_px + marker_px, border_px),
-        "bottom_right": (border_px + marker_px, border_px + marker_px),
-        "bottom_left": (border_px, border_px + marker_px),
-    }
-    if anchor_corner not in corner_offset:
-        raise ValueError(f"Unsupported anchor corner: {anchor_corner}")
-    return np.array(corner_offset[anchor_corner], dtype=np.float64)
-
-
-def render_ground_field_image(
-    dictionary_name,
-    placements,
-    width_mm,
-    height_mm,
-    cell_mm,
-    marker_size_mm,
-    canvas_px,
-    show_markers=False,
-):
-    margin_mm = marker_size_mm
-    canvas_width_mm = width_mm + margin_mm * 2.0
-    canvas_height_mm = height_mm + margin_mm * 2.0
-    scale = canvas_px / max(canvas_width_mm, canvas_height_mm)
-    margin_px = int(round(margin_mm * scale))
-    marker_px = max(1, int(round(marker_size_mm * scale)))
-    panel_border_px = max(12, marker_px // 8)
-    panel_label_px = max(28, marker_px // 4)
-    panel_extent_px = marker_px + panel_border_px * 2 + panel_label_px
-    margin_px = panel_extent_px
-    canvas_w = max(1, int(round(width_mm * scale)) + margin_px * 2)
-    canvas_h = max(1, int(round(height_mm * scale)) + margin_px * 2)
-    canvas = np.full((canvas_h, canvas_w, 3), 255, dtype=np.uint8)
-
-    grid_color = (220, 220, 220)
-    border_color = (180, 180, 180)
-
-    def world_to_canvas_y(y_mm):
-        return margin_px + int(round((height_mm - y_mm) * scale))
-
-    for col in range(int(width_mm / cell_mm) + 1):
-        x = margin_px + int(round(col * cell_mm * scale))
-        cv2.line(canvas, (x, 0), (x, canvas_h - 1), grid_color, 1, cv2.LINE_AA)
-    for row in range(int(height_mm / cell_mm) + 1):
-        y = world_to_canvas_y(row * cell_mm)
-        cv2.line(canvas, (0, y), (canvas_w - 1, y), grid_color, 1, cv2.LINE_AA)
-
-    cv2.rectangle(
-        canvas,
-        (margin_px, margin_px),
-        (margin_px + int(round(width_mm * scale)) - 1, margin_px + int(round(height_mm * scale)) - 1),
-        border_color,
-        2,
-        cv2.LINE_AA,
-    )
-
-    if show_markers:
-        for item in placements:
-            label = f"GROUND ID {item['id']}"
-            marker, border_px = create_marker_panel(dictionary_name, item["id"], marker_px, label, border_px=0)
-            if len(marker.shape) == 2:
-                marker = cv2.cvtColor(marker, cv2.COLOR_GRAY2BGR)
-            anchor = np.asarray(item["anchor_mm"], dtype=np.float64)
-            offset = marker_panel_anchor_offset(marker_px, border_px, item["anchor_corner"])
-            top_left_x = margin_px + int(round(anchor[0] * scale)) - int(offset[0])
-            top_left_y = world_to_canvas_y(anchor[1]) - int(offset[1])
-            bottom_right_x = top_left_x + marker.shape[1]
-            bottom_right_y = top_left_y + marker.shape[0]
-            if top_left_x < 0 or top_left_y < 0 or bottom_right_x > canvas_w or bottom_right_y > canvas_h:
-                raise RuntimeError(f"Ground marker {item['id']} does not fit inside the field image.")
-            canvas[top_left_y:bottom_right_y, top_left_x:bottom_right_x] = marker
-
-    return canvas
-
-
-def save_ground_marker_pngs(dictionary_name, placements, out_dir, marker_px, page_px):
-    for item in placements:
-        marker = create_ground_marker_image(
-            dictionary_name,
-            item["id"],
-            marker_px,
-            page_px,
-            f"GROUND ID {item['id']}",
-        )
-        cv2.imwrite(str(out_dir / f"ground_id_{item['id']:03d}.png"), marker)
+def write_marker_svg(path, dictionary_name, marker_id, marker_size_mm, label):
+    marker = create_marker_bitmap(dictionary_name, marker_id, 600)
+    ok, encoded = cv2.imencode(".png", marker)
+    if not ok:
+        raise RuntimeError(f"Could not encode marker {marker_id} as PNG.")
+    payload = base64.b64encode(encoded.tobytes()).decode("ascii")
+    margin_mm = 3.0
+    label_height_mm = 5.0
+    page_w = marker_size_mm + margin_mm * 2
+    page_h = marker_size_mm + margin_mm * 2 + label_height_mm
+    svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="{page_w}mm" height="{page_h}mm" viewBox="0 0 {page_w} {page_h}">
+  <rect width="100%" height="100%" fill="white"/>
+  <image href="data:image/png;base64,{payload}" x="{margin_mm}" y="{margin_mm}" width="{marker_size_mm}" height="{marker_size_mm}" image-rendering="pixelated"/>
+  <text x="{margin_mm}" y="{marker_size_mm + margin_mm + 4}" font-family="Arial, sans-serif" font-size="3" fill="black">{label}</text>
+</svg>
+"""
+    Path(path).write_text(svg, encoding="utf-8")
 
 
 def make_ground(args):
@@ -277,32 +160,13 @@ def make_ground(args):
     width_mm = args.cols * args.cell_mm
     height_mm = args.rows * args.cell_mm
     placements = [
-        {
-            "id": args.start_id + 0,
-            "name": "origin",
-            "anchor_mm": [0.0, 0.0, 0.0],
-            "anchor_corner": args.anchor_corner,
-            "yaw_deg": 0.0,
-        },
-        {
-            "id": args.start_id + 1,
-            "name": "x_axis",
-            "anchor_mm": [width_mm, 0.0, 0.0],
-            "anchor_corner": args.anchor_corner,
-            "yaw_deg": 0.0,
-        },
-        {
-            "id": args.start_id + 2,
-            "name": "y_axis",
-            "anchor_mm": [0.0, height_mm, 0.0],
-            "anchor_corner": args.anchor_corner,
-            "yaw_deg": 0.0,
-        },
+        {"id": args.start_id + 0, "name": "origin", "anchor_mm": [0.0, 0.0, 0.0], "yaw_deg": 0.0},
+        {"id": args.start_id + 1, "name": "x_axis", "anchor_mm": [width_mm, 0.0, 0.0], "yaw_deg": 0.0},
+        {"id": args.start_id + 2, "name": "y_axis", "anchor_mm": [0.0, height_mm, 0.0], "yaw_deg": 0.0},
         {
             "id": args.start_id + 3,
             "name": "xy_corner",
             "anchor_mm": [width_mm, height_mm, 0.0],
-            "anchor_corner": args.anchor_corner,
             "yaw_deg": 0.0,
         },
     ]
@@ -314,58 +178,46 @@ def make_ground(args):
                     "id": args.start_id + 4,
                     "name": "bottom_mid",
                     "anchor_mm": [width_mm / 2.0, 0.0, 0.0],
-                    "anchor_corner": args.anchor_corner,
                     "yaw_deg": 0.0,
                 },
                 {
                     "id": args.start_id + 5,
                     "name": "top_mid",
                     "anchor_mm": [width_mm / 2.0, height_mm, 0.0],
-                    "anchor_corner": args.anchor_corner,
                     "yaw_deg": 0.0,
                 },
                 {
                     "id": args.start_id + 6,
                     "name": "left_mid",
                     "anchor_mm": [0.0, height_mm / 2.0, 0.0],
-                    "anchor_corner": args.anchor_corner,
                     "yaw_deg": 0.0,
                 },
                 {
                     "id": args.start_id + 7,
                     "name": "right_mid",
                     "anchor_mm": [width_mm, height_mm / 2.0, 0.0],
-                    "anchor_corner": args.anchor_corner,
                     "yaw_deg": 0.0,
                 },
             ]
         )
 
-    field_no_labels = render_ground_field_image(
-        args.dictionary,
-        placements,
-        width_mm,
-        height_mm,
-        args.cell_mm,
-        args.marker_size_mm,
-        args.page_px,
-        show_markers=False,
-    )
-    field_with_labels = render_ground_field_image(
-        args.dictionary,
-        placements,
-        width_mm,
-        height_mm,
-        args.cell_mm,
-        args.marker_size_mm,
-        args.page_px,
-        show_markers=True,
-    )
-    field_no_labels_path = out_dir / "ground_field_no_labels.png"
-    field_path = out_dir / "ground_field.png"
-    cv2.imwrite(str(field_no_labels_path), field_no_labels)
-    cv2.imwrite(str(field_path), field_with_labels)
-    save_ground_marker_pngs(args.dictionary, placements, out_dir, int(args.page_px * 0.72), args.page_px)
+    marker_px = int(args.page_px * 0.72)
+    for item in placements:
+        image = create_marker_image(
+            args.dictionary,
+            item["id"],
+            marker_px,
+            args.page_px,
+            f"GROUND ID {item['id']}",
+        )
+        cv2.imwrite(str(out_dir / f"ground_id_{item['id']:03d}.png"), image)
+        write_marker_svg(
+            out_dir / f"ground_id_{item['id']:03d}.svg",
+            args.dictionary,
+            item["id"],
+            args.marker_size_mm,
+            f"GROUND ID {item['id']}",
+        )
 
     config = {
         "dictionary": args.dictionary,
@@ -381,12 +233,9 @@ def make_ground(args):
     config_path = out_dir / "ground_markers.json"
     config_path.write_text(json.dumps(config, indent=2), encoding="utf-8")
     print(f"Saved ground markers to: {out_dir.resolve()}")
-    print(f"Saved ground field image: {field_path.resolve()}")
-    print(f"Saved no-label field image: {field_no_labels_path.resolve()}")
-    print(f"Saved individual marker PNGs: {out_dir.resolve()}")
     print(f"Saved placement config: {config_path.resolve()}")
-    print("Print the field image directly; marker size is controlled by marker_size_mm.")
-    print(f"Ground markers use the {args.anchor_corner} corner on each configured grid vertex.")
+    print("Prefer printing SVG files at 100% scale. The black marker square is sized by marker_size_mm.")
+    print(f"Place each marker's {args.anchor_corner} corner on the configured grid vertex.")
 
 
 def make_top(args):
@@ -395,13 +244,21 @@ def make_top(args):
     marker_px = int(args.page_px * 0.72)
     ids = []
     for marker_id in range(args.start_id, args.start_id + args.count):
-        image, _border_px = create_marker_panel(
+        image = create_marker_image(
             args.dictionary,
             marker_id,
             marker_px,
+            args.page_px,
             f"TOP ID {marker_id}",
         )
         cv2.imwrite(str(out_dir / f"top_id_{marker_id:03d}.png"), image)
+        write_marker_svg(
+            out_dir / f"top_id_{marker_id:03d}.svg",
+            args.dictionary,
+            marker_id,
+            args.marker_size_mm,
+            f"TOP ID {marker_id}",
+        )
         ids.append(marker_id)
     manifest = {
         "dictionary": args.dictionary,
@@ -410,7 +267,7 @@ def make_top(args):
     }
     (out_dir / "top_markers.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     print(f"Saved top markers to: {out_dir.resolve()}")
-    print("PNG marker pages were generated; print them at the marker_size_mm you want to use.")
+    print("Prefer printing SVG files at 100% scale. The black marker square is sized by marker_size_mm.")
     print("Use different IDs on top blocks when possible. It makes multi-camera de-duplication much easier.")
 
 
@@ -580,7 +437,7 @@ def detect_top(args):
     out_obs.write_text(json.dumps(observations, indent=2), encoding="utf-8")
     print(f"Saved grid CSV: {out_csv.resolve()}")
     print(f"Saved observations: {out_obs.resolve()}")
-    print(f"Detected markers: {len(observations)}")
+    print(f"Detected top markers: {len(observations)}")
 
 
 def open_zed_camera(sl, serial_number, resolution, fps):
@@ -596,65 +453,6 @@ def open_zed_camera(sl, serial_number, resolution, fps):
     return zed
 
 
-def camera_world_transform_from_extrinsic(path):
-    extrinsic = json.loads(Path(path).read_text(encoding="utf-8"))
-    return invert_transform(
-        np.asarray(extrinsic["world_to_camera"]["rotation"], dtype=np.float64),
-        np.asarray(extrinsic["world_to_camera"]["translation_mm"], dtype=np.float64),
-    )
-
-
-def live_camera_config_from_item(item, index):
-    name = item.get("name") or item.get("camera_name") or f"camera_{index + 1}"
-    serial_value = item.get("serial_number", item.get("camera", item.get("serial")))
-    if serial_value is None:
-        raise RuntimeError(f"Live camera config item {index} is missing camera/serial_number.")
-    return {
-        "name": name,
-        "serial_number": resolve_camera_serial_number(serial_value),
-        "intrinsics": item["intrinsics"],
-        "extrinsic": item["extrinsic"],
-    }
-
-
-def load_live_camera_configs(args):
-    if args.camera_config is not None:
-        data = json.loads(Path(args.camera_config).read_text(encoding="utf-8"))
-        items = data.get("cameras", data) if isinstance(data, dict) else data
-        if not isinstance(items, list) or not items:
-            raise RuntimeError("camera-config must contain a non-empty camera list.")
-        return [live_camera_config_from_item(item, index) for index, item in enumerate(items)]
-
-    required_pairs = [
-        ("--camera-a", args.camera_a_serial_number),
-        ("--camera-b", args.camera_b_serial_number),
-        ("--camera-a-intrinsics", args.camera_a_intrinsics),
-        ("--camera-b-intrinsics", args.camera_b_intrinsics),
-        ("--camera-a-extrinsic", args.camera_a_extrinsic),
-        ("--camera-b-extrinsic", args.camera_b_extrinsic),
-    ]
-    missing = [name for name, value in required_pairs if value is None]
-    if missing:
-        raise RuntimeError(
-            "Provide --camera-config for 1+ cameras, or provide all legacy A/B arguments. "
-            f"Missing: {', '.join(missing)}"
-        )
-    return [
-        {
-            "name": "camera_a",
-            "serial_number": args.camera_a_serial_number,
-            "intrinsics": args.camera_a_intrinsics,
-            "extrinsic": args.camera_a_extrinsic,
-        },
-        {
-            "name": "camera_b",
-            "serial_number": args.camera_b_serial_number,
-            "intrinsics": args.camera_b_intrinsics,
-            "extrinsic": args.camera_b_extrinsic,
-        },
-    ]
-
-
 def live_top(args):
     try:
         import pyzed.sl as sl
@@ -662,26 +460,28 @@ def live_top(args):
         raise RuntimeError("pyzed is not installed or ZED SDK Python API is unavailable.") from exc
 
     ground_config = json.loads(Path(args.ground_config).read_text(encoding="utf-8"))
-    camera_configs = load_live_camera_configs(args)
-    live_cameras = []
+    camera_a_matrix, camera_a_dist_coeffs = load_intrinsics(args.camera_a_intrinsics)
+    camera_b_matrix, camera_b_dist_coeffs = load_intrinsics(args.camera_b_intrinsics)
 
-    for config in camera_configs:
-        camera_matrix, dist_coeffs = load_intrinsics(config["intrinsics"])
-        rotation_cw, translation_cw = camera_world_transform_from_extrinsic(config["extrinsic"])
-        zed = open_zed_camera(sl, config["serial_number"], args.resolution, args.fps)
-        live_cameras.append(
-            {
-                "name": config["name"],
-                "serial_number": config["serial_number"],
-                "intrinsics": camera_matrix,
-                "dist_coeffs": dist_coeffs,
-                "rotation_cw": rotation_cw,
-                "translation_cw": translation_cw,
-                "zed": zed,
-                "runtime": sl.RuntimeParameters(),
-                "image": sl.Mat(),
-            }
-        )
+    camera_a_extrinsic = json.loads(Path(args.camera_a_extrinsic).read_text(encoding="utf-8"))
+    camera_b_extrinsic = json.loads(Path(args.camera_b_extrinsic).read_text(encoding="utf-8"))
+
+    rotation_a_cw, translation_a_cw = invert_transform(
+        np.asarray(camera_a_extrinsic["world_to_camera"]["rotation"], dtype=np.float64),
+        np.asarray(camera_a_extrinsic["world_to_camera"]["translation_mm"], dtype=np.float64),
+    )
+    rotation_b_cw, translation_b_cw = invert_transform(
+        np.asarray(camera_b_extrinsic["world_to_camera"]["rotation"], dtype=np.float64),
+        np.asarray(camera_b_extrinsic["world_to_camera"]["translation_mm"], dtype=np.float64),
+    )
+
+    camera_a = open_zed_camera(sl, args.camera_a_serial_number, args.resolution, args.fps)
+    camera_b = open_zed_camera(sl, args.camera_b_serial_number, args.resolution, args.fps)
+
+    runtime_a = sl.RuntimeParameters()
+    runtime_b = sl.RuntimeParameters()
+    image_a = sl.Mat()
+    image_b = sl.Mat()
 
     out_csv = Path(args.output_csv)
     out_csv.parent.mkdir(parents=True, exist_ok=True)
@@ -690,47 +490,70 @@ def live_top(args):
 
     last_write = 0.0
 
-    print(f"Opened {len(live_cameras)} camera(s) at {args.resolution}. Press q/ESC in any preview window to stop.")
+    print("Press q/ESC in the preview window to stop the live loop.")
     try:
         while True:
-            merged_grid = np.zeros((ground_config["rows"], ground_config["cols"]), dtype=np.int32)
-            merged_observations = []
-            marker_counts = []
+            ok_a = camera_a.grab(runtime_a) == sl.ERROR_CODE.SUCCESS
+            ok_b = camera_b.grab(runtime_b) == sl.ERROR_CODE.SUCCESS
+            if not ok_a and not ok_b:
+                continue
 
-            for camera in live_cameras:
-                ok = camera["zed"].grab(camera["runtime"]) == sl.ERROR_CODE.SUCCESS
-                if not ok:
-                    marker_counts.append(f"{camera['name']}:0")
-                    continue
+            centers_a = []
+            centers_b = []
+            frame_a = None
+            frame_b = None
 
-                camera["zed"].retrieve_image(camera["image"], sl.VIEW.LEFT)
-                frame = cv2.cvtColor(camera["image"].get_data(), cv2.COLOR_BGRA2BGR)
-                centers = estimate_top_centers(
-                    frame,
+            if ok_a:
+                camera_a.retrieve_image(image_a, sl.VIEW.LEFT)
+                frame_a = cv2.cvtColor(image_a.get_data(), cv2.COLOR_RGBA2BGR)
+                centers_a = estimate_top_centers(
+                    frame_a,
                     ground_config["dictionary"],
-                    camera["intrinsics"],
-                    camera["dist_coeffs"],
+                    camera_a_matrix,
+                    camera_a_dist_coeffs,
                     args.top_marker_size_mm,
                 )
-                grid, observations = build_grid_from_centers(
-                    centers,
-                    ground_config,
-                    camera["rotation_cw"],
-                    camera["translation_cw"],
-                    args.block_height_mm,
+
+            if ok_b:
+                camera_b.retrieve_image(image_b, sl.VIEW.LEFT)
+                frame_b = cv2.cvtColor(image_b.get_data(), cv2.COLOR_RGBA2BGR)
+                centers_b = estimate_top_centers(
+                    frame_b,
+                    ground_config["dictionary"],
+                    camera_b_matrix,
+                    camera_b_dist_coeffs,
+                    args.top_marker_size_mm,
                 )
-                merged_grid = np.maximum(merged_grid, grid)
-                marker_counts.append(f"{camera['name']}:{len(centers)}")
 
-                for obs in observations:
-                    item = dict(obs)
-                    item["source"] = camera["name"]
-                    item["serial_number"] = camera["serial_number"]
-                    merged_observations.append(item)
+            grid_a, observations_a = build_grid_from_centers(
+                centers_a,
+                ground_config,
+                rotation_a_cw,
+                translation_a_cw,
+                args.block_height_mm,
+            )
+            grid_b, observations_b = build_grid_from_centers(
+                centers_b,
+                ground_config,
+                rotation_b_cw,
+                translation_b_cw,
+                args.block_height_mm,
+            )
+            merged_grid = np.maximum(grid_a, grid_b)
+            merged_observations = []
+            for obs in observations_a:
+                item = dict(obs)
+                item["source"] = "camera_a"
+                merged_observations.append(item)
+            for obs in observations_b:
+                item = dict(obs)
+                item["source"] = "camera_b"
+                merged_observations.append(item)
 
+            if frame_a is not None:
                 cv2.putText(
-                    frame,
-                    f"{camera['name']} SN {camera['serial_number']} | markers: {len(centers)}",
+                    frame_a,
+                    f"A SN {args.camera_a_serial_number} | markers: {len(centers_a)}",
                     (24, 40),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     1.0,
@@ -738,14 +561,29 @@ def live_top(args):
                     2,
                     cv2.LINE_AA,
                 )
-                cv2.imshow(f"{camera['name']} top", frame)
+                cv2.imshow("camera A top", frame_a)
+
+            if frame_b is not None:
+                cv2.putText(
+                    frame_b,
+                    f"B SN {args.camera_b_serial_number} | markers: {len(centers_b)}",
+                    (24, 40),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1.0,
+                    (0, 255, 0),
+                    2,
+                    cv2.LINE_AA,
+                )
+                cv2.imshow("camera B top", frame_b)
 
             if time.monotonic() - last_write >= args.update_interval_sec:
                 with out_csv.open("w", newline="", encoding="utf-8-sig") as handle:
                     writer = csv.writer(handle)
                     writer.writerows(merged_grid.tolist())
                 out_json.write_text(json.dumps(merged_observations, indent=2), encoding="utf-8")
-                print(f"Updated live grid: {out_csv.resolve()} | {' | '.join(marker_counts)}")
+                print(
+                    f"Updated live grid: {out_csv.resolve()} | A markers: {len(centers_a)} | B markers: {len(centers_b)}"
+                )
                 last_write = time.monotonic()
 
             key = cv2.waitKey(1) & 0xFF
@@ -753,8 +591,8 @@ def live_top(args):
                 break
     finally:
         cv2.destroyAllWindows()
-        for camera in live_cameras:
-            camera["zed"].close()
+        camera_a.close()
+        camera_b.close()
 
 
 def merge_observations(args):
@@ -784,7 +622,6 @@ def merge_observations(args):
     out_json.write_text(json.dumps(merged, indent=2), encoding="utf-8")
     print(f"Saved merged grid CSV: {out_csv.resolve()}")
     print(f"Saved merged observations: {out_json.resolve()}")
-    print(f"Merged {len(args.observations)} observation file(s), {len(merged)} valid observation(s).")
 
 
 def build_parser():
@@ -800,11 +637,11 @@ def build_parser():
     make_ground_cmd.add_argument("--dictionary", default="DICT_5X5_100")
     make_ground_cmd.add_argument("--cols", type=int, required=True, help="Grid columns.")
     make_ground_cmd.add_argument("--rows", type=int, required=True, help="Grid rows.")
-    make_ground_cmd.add_argument("--cell-mm", type=float, default=40.0, help="Grid cell size in millimeters.")
+    make_ground_cmd.add_argument("--cell-mm", type=float, default=20.0, help="Grid cell size in millimeters.")
     make_ground_cmd.add_argument(
         "--marker-size-mm",
         type=float,
-        default=30.0,
+        default=15.0,
         help="Physical black ArUco square size in millimeters.",
     )
     make_ground_cmd.add_argument(
@@ -814,7 +651,7 @@ def build_parser():
         help="Marker corner placed exactly on the configured grid vertex.",
     )
     make_ground_cmd.add_argument("--start-id", type=int, default=0, help="First ground marker ID.")
-    make_ground_cmd.add_argument("--page-px", type=int, default=1200, help="Ground field image long-edge size in pixels.")
+    make_ground_cmd.add_argument("--page-px", type=int, default=1200, help="Generated PNG canvas size in pixels.")
     make_ground_cmd.add_argument("--add-midpoints", action="store_true", help="Add four extra edge midpoint markers.")
     make_ground_cmd.set_defaults(func=make_ground)
 
@@ -824,7 +661,7 @@ def build_parser():
     make_top_cmd.add_argument(
         "--marker-size-mm",
         type=float,
-        default=30.0,
+        default=15.0,
         help="Physical black ArUco square size in millimeters.",
     )
     make_top_cmd.add_argument("--start-id", type=int, default=20, help="First top marker ID.")
@@ -849,10 +686,10 @@ def build_parser():
     detect_cmd.add_argument(
         "--top-marker-size-mm",
         type=float,
-        default=30.0,
+        default=15.0,
         help="Physical black top-marker square size in millimeters.",
     )
-    detect_cmd.add_argument("--block-height-mm", type=float, default=40.0, help="Physical block height in millimeters.")
+    detect_cmd.add_argument("--block-height-mm", type=float, default=20.0, help="Physical block height in millimeters.")
     detect_cmd.add_argument("--output-csv", default="outputs/grid_heights.csv", help="Output grid-height CSV path.")
     detect_cmd.add_argument(
         "--output-observations",
@@ -863,49 +700,28 @@ def build_parser():
 
     merge_cmd = sub.add_parser("merge-observations", formatter_class=formatter)
     merge_cmd.add_argument("--ground-config", default="markers/ground/ground_markers.json")
-    merge_cmd.add_argument(
-        "--observations",
-        nargs="+",
-        required=True,
-        help="One or more per-camera observation JSON files.",
-    )
+    merge_cmd.add_argument("--observations", nargs="+", required=True)
     merge_cmd.add_argument("--output-csv", default="outputs/grid_heights_merged.csv")
     merge_cmd.add_argument("--output-json", default="outputs/top_observations_merged.json")
     merge_cmd.set_defaults(func=merge_observations)
 
     live_cmd = sub.add_parser("live-top", formatter_class=formatter)
     live_cmd.add_argument("--ground-config", default="markers/ground/ground_markers.json")
-    live_cmd.add_argument(
-        "--camera-config",
-        help="JSON file containing one or more live camera configs.",
-    )
-    live_cmd.add_argument(
-        "--camera-a",
-        "--camera-a-serial-number",
-        dest="camera_a_serial_number",
-        type=resolve_camera_serial_number,
-        help="Camera A id, e.g. zed1, or a raw serial number.",
-    )
-    live_cmd.add_argument(
-        "--camera-b",
-        "--camera-b-serial-number",
-        dest="camera_b_serial_number",
-        type=resolve_camera_serial_number,
-        help="Camera B id, e.g. zed2, or a raw serial number.",
-    )
-    live_cmd.add_argument("--camera-a-intrinsics")
-    live_cmd.add_argument("--camera-b-intrinsics")
-    live_cmd.add_argument("--camera-a-extrinsic")
-    live_cmd.add_argument("--camera-b-extrinsic")
-    live_cmd.add_argument("--resolution", default="HD1080", help="ZED capture resolution.")
-    live_cmd.add_argument("--fps", type=int, default=30, help="ZED capture FPS.")
+    live_cmd.add_argument("--camera-a-serial-number", type=int, required=True)
+    live_cmd.add_argument("--camera-b-serial-number", type=int, required=True)
+    live_cmd.add_argument("--camera-a-intrinsics", required=True)
+    live_cmd.add_argument("--camera-b-intrinsics", required=True)
+    live_cmd.add_argument("--camera-a-extrinsic", required=True)
+    live_cmd.add_argument("--camera-b-extrinsic", required=True)
+    live_cmd.add_argument("--resolution", default="HD720")
+    live_cmd.add_argument("--fps", type=int, default=30)
     live_cmd.add_argument(
         "--top-marker-size-mm",
         type=float,
-        default=30.0,
+        default=15.0,
         help="Physical black top-marker square size in millimeters.",
     )
-    live_cmd.add_argument("--block-height-mm", type=float, default=40.0, help="Physical block height in millimeters.")
+    live_cmd.add_argument("--block-height-mm", type=float, default=20.0, help="Physical block height in millimeters.")
     live_cmd.add_argument("--output-csv", default="outputs/grid_heights_live.csv")
     live_cmd.add_argument("--output-observations", default="outputs/top_observations_live.json")
     live_cmd.add_argument("--update-interval-sec", type=float, default=0.5)

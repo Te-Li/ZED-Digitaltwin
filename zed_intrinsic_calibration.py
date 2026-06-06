@@ -3,6 +3,8 @@ import json
 import sys
 from pathlib import Path
 
+from camera_serials import resolve_camera_serial_number
+
 try:
     import cv2
 except ImportError:
@@ -152,7 +154,7 @@ def capture_zed_left_images(args):
             continue
         zed.retrieve_image(image, sl.VIEW.LEFT)
         frame = image.get_data()
-        frame = cv2.cvtColor(frame, cv2.COLOR_RGBA2BGR)
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
 
         if output_image is not None:
             cv2.imwrite(str(output_image), frame)
@@ -269,7 +271,11 @@ def calibrate_from_images(args):
 
 
 def build_parser():
-    parser = argparse.ArgumentParser(description="ZED left-camera intrinsic calibration helper.")
+    formatter = argparse.ArgumentDefaultsHelpFormatter
+    parser = argparse.ArgumentParser(
+        description="ZED left-camera intrinsic calibration helper.",
+        formatter_class=formatter,
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     common_board = argparse.ArgumentParser(add_help=False)
@@ -279,28 +285,40 @@ def build_parser():
     common_board.add_argument("--square-length-mm", type=float, default=40.0)
     common_board.add_argument("--marker-length-mm", type=float, default=30.0)
 
-    board = sub.add_parser("make-board", parents=[common_board])
+    board = sub.add_parser("make-board", parents=[common_board], formatter_class=formatter)
     board.add_argument("--output", default="calibration/charuco_board.png")
     board.add_argument("--image-width-px", type=int, default=2400)
     board.add_argument("--image-height-px", type=int, default=1800)
     board.add_argument("--margin-px", type=int, default=80)
     board.set_defaults(func=generate_board)
 
-    factory = sub.add_parser("show-zed-factory")
-    factory.add_argument("--resolution", default="HD720")
-    factory.add_argument("--fps", type=int, default=30)
-    factory.add_argument("--serial-number", type=int, help="Open a specific ZED by serial number.")
+    factory = sub.add_parser("show-zed-factory", formatter_class=formatter)
+    factory.add_argument("--resolution", default="HD1080", help="ZED capture resolution.")
+    factory.add_argument("--fps", type=int, default=30, help="ZED capture FPS.")
+    factory.add_argument(
+        "--camera",
+        "--serial-number",
+        dest="serial_number",
+        type=resolve_camera_serial_number,
+        help="Open a specific ZED by camera id, e.g. zed1, or by serial number.",
+    )
     factory.set_defaults(func=print_zed_factory_intrinsics)
 
-    capture = sub.add_parser("capture")
+    capture = sub.add_parser("capture", formatter_class=formatter)
     capture.add_argument("--output-dir", default="calibration/images")
     capture.add_argument("--output-image", help="Save one frame directly to this image path.")
-    capture.add_argument("--resolution", default="HD720")
-    capture.add_argument("--fps", type=int, default=30)
-    capture.add_argument("--serial-number", type=int, help="Open a specific ZED by serial number.")
+    capture.add_argument("--resolution", default="HD1080", help="ZED capture resolution.")
+    capture.add_argument("--fps", type=int, default=30, help="ZED capture FPS.")
+    capture.add_argument(
+        "--camera",
+        "--serial-number",
+        dest="serial_number",
+        type=resolve_camera_serial_number,
+        help="Open a specific ZED by camera id, e.g. zed1, or by serial number.",
+    )
     capture.set_defaults(func=capture_zed_left_images)
 
-    calibrate = sub.add_parser("calibrate", parents=[common_board])
+    calibrate = sub.add_parser("calibrate", parents=[common_board], formatter_class=formatter)
     calibrate.add_argument("--image-dir", default="calibration/images")
     calibrate.add_argument("--output", default="calibration/zed_left_intrinsics.json")
     calibrate.add_argument("--min-corners", type=int, default=12)
