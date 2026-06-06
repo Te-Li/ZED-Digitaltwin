@@ -28,7 +28,7 @@ python aruco_grid_twin.py make-ground --cols 8 --rows 6 --anchor-corner top_righ
 生成 30 mm 顶部标签，并贴在每个 40 mm 方块顶面中心。
 
 ```powershell
-python aruco_grid_twin.py make-top --count 50 --start-id 20
+python aruco_grid_twin.py make-top --count 50 --start-id 10
 ```
 
 ## 4. Capture camera ground image
@@ -63,26 +63,16 @@ python aruco_grid_twin.py detect-top --image captures/cam_a_top.png --intrinsics
 融合 1 个或任意多个相机观测 JSON，并输出最终层数表。
 
 ```powershell
-python aruco_grid_twin.py merge-observations --observations outputs/cam_a_obs.json outputs/cam_b_obs.json outputs/cam_c_obs.json --output-csv outputs/grid_heights_merged.csv
+python aruco_grid_twin.py merge-observations --observations outputs/cam_a_obs.json [outputs/cam_b_obs.json outputs/cam_c_obs.json] --output-csv outputs/grid_heights_merged.csv
 ```
 
 ## 9. Prepare live camera config
-复制示例配置并按实际相机数量填写 name、camera、intrinsics、extrinsic。
+根据示例配置```live_cameras.example.json```按实际相机数量填写 name、camera、intrinsics、extrinsic，保存在```live_cameras.json```。
 
-```powershell
-copy live_cameras.example.json live_cameras.json
-```
 
 ## 10. Run live multi-camera tracking
 使用配置文件同时打开 1 台或任意多台 ZED，持续融合顶部标签并实时刷新表格。
 
 ```powershell
 python aruco_grid_twin.py live-top --camera-config live_cameras.json --output-csv outputs/grid_heights_live.csv --output-observations outputs/top_observations_live.json
-```
-
-## 11. Run legacy two-camera live tracking
-如果只用旧的 A/B 参数，也可以继续以两台相机方式运行。
-
-```powershell
-python aruco_grid_twin.py live-top --camera-a zed1 --camera-b zed2 --camera-a-intrinsics calibration/zed1_left_intrinsics.json --camera-b-intrinsics calibration/zed2_left_intrinsics.json --camera-a-extrinsic calibration/cam_a_extrinsic.json --camera-b-extrinsic calibration/cam_b_extrinsic.json
 ```
