@@ -1,5 +1,6 @@
 import argparse
 import csv
+import ctypes
 import json
 import math
 import sys
@@ -19,6 +20,31 @@ except ImportError:
 def require_opencv():
     if cv2 is None:
         raise RuntimeError("OpenCV is not installed. Run: pip install opencv-contrib-python")
+
+
+def get_preview_fit_size(image_width, image_height, margin_ratio=0.9):
+    screen_width = 1600
+    screen_height = 900
+    try:
+        user32 = ctypes.windll.user32
+        screen_width = int(user32.GetSystemMetrics(0))
+        screen_height = int(user32.GetSystemMetrics(1))
+    except Exception:
+        pass
+
+    max_width = max(1, int(screen_width * margin_ratio))
+    max_height = max(1, int(screen_height * margin_ratio))
+    scale = min(1.0, max_width / float(image_width), max_height / float(image_height))
+    return max(1, int(round(image_width * scale))), max(1, int(round(image_height * scale)))
+
+
+def resize_preview_for_display(image):
+    height, width = image.shape[:2]
+    target_width, target_height = get_preview_fit_size(width, height)
+    if target_width == width and target_height == height:
+        return image, (width, height)
+    resized = cv2.resize(image, (target_width, target_height), interpolation=cv2.INTER_AREA)
+    return resized, (target_width, target_height)
 
 
 def get_aruco_dict(name):
@@ -124,18 +150,18 @@ def create_marker_panel(dictionary_name, marker_id, marker_px, label, border_px=
     
     label_height_px = max(28, marker_px // 4)
     
-    # 页面尺寸：标记 + 四周边距
-    page_w = marker_px + border_px * 4
-    page_h = marker_px + border_px * 4  # 先设基准，后面可能调整
+    # 页面尺寸：标记 + 左右边距 + 下方标签区
+    page_w = marker_px + border_px * 2
+    page_h = marker_px + border_px * 2 + label_height_px
     
     page = np.full((page_h, page_w), 255, dtype=np.uint8)
-    page[border_px : border_px + marker_px, border_px*2 : border_px*2 + marker_px] = marker
+    page[border_px : border_px + marker_px, border_px : border_px + marker_px] = marker
 
     font_scale = max(0.35, marker_px / 160.0)
     thickness = max(1, marker_px // 120)
     
-    # 文字可用宽度（左右各留 border_px*2）
-    available_width = page_w - border_px * 4
+    # 文字可用宽度（左右各留 border_px）
+    available_width = page_w - border_px * 2
     text_size, baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
     
     # 如果文字太宽，自动缩小
@@ -242,7 +268,7 @@ def render_ground_field_image(
     if show_markers:
         for item in placements:
             label = f"GROUND ID {item['id']}"
-            marker, border_px = create_marker_panel(dictionary_name, item["id"], marker_px, label, border_px=0)
+            marker, border_px = create_marker_panel(dictionary_name, item["id"], marker_px, label, border_px=10)
             if len(marker.shape) == 2:
                 marker = cv2.cvtColor(marker, cv2.COLOR_GRAY2BGR)
             anchor = np.asarray(item["anchor_mm"], dtype=np.float64)
@@ -451,6 +477,8 @@ def solve_extrinsic(args):
         used_ids.append(marker_id)
 
     if len(used_ids) < args.min_markers:
+        for i in range(len(used_ids)):
+            print(f"Used marker ID {used_ids[i]} with corners: {id_to_corners[used_ids[i]].tolist()}")
         raise RuntimeError(f"Only {len(used_ids)} ground markers detected. Need at least {args.min_markers}.")
 
     ok, rvec, tvec = cv2.solvePnP(
@@ -503,7 +531,7 @@ def estimate_top_centers(image, dictionary_name, camera_matrix, dist_coeffs, mar
     centers = []
     object_points = marker_local_corners(marker_size)
     for marker_id, marker_corners in zip(ids.reshape(-1), corners):
-        ok, _rvec, tvec = cv2.solvePnP(
+        ok, rvec, tvec = cv2.solvePnP(
             object_points,
             marker_corners.reshape(4, 2).astype(np.float64),
             camera_matrix,
@@ -511,23 +539,75 @@ def estimate_top_centers(image, dictionary_name, camera_matrix, dist_coeffs, mar
             flags=cv2.SOLVEPNP_IPPE_SQUARE,
         )
         if ok:
-            centers.append({"id": int(marker_id), "camera_xyz_mm": np.asarray(tvec).reshape(3)})
+            # 新增：把 rvec 也传出去用于计算朝向
+            centers.append({
+                "id": int(marker_id), 
+                "camera_xyz_mm": np.asarray(tvec).reshape(3),
+                "rvec": rvec
+            })
     return centers
 
 
 def build_grid_from_centers(centers, ground_config, rotation_cw, translation_cw, block_height_mm):
     grid = np.zeros((ground_config["rows"], ground_config["cols"]), dtype=np.int32)
+    # 新增：初始化朝向网格，存储字符串如 "0,0" 或 "1,0"
+    grid_orient = np.full((ground_config["rows"], ground_config["cols"]), "0,0", dtype=object)
     observations = []
+
+    tolerance_ratio = 0.4 
+    margin = block_height_mm * tolerance_ratio
 
     for center in centers:
         cam_xyz = center["camera_xyz_mm"].reshape(3, 1)
         world_xyz = rotation_cw @ cam_xyz + translation_cw
         x, y, z = world_xyz.reshape(3).tolist()
+        
         col = int(math.floor(x / ground_config["cell_mm"]))
         row = int(math.floor(y / ground_config["cell_mm"]))
-        level = int(round(z / block_height_mm))
+        
+        # 层级判定逻辑
+        estimated_level = z / block_height_mm
+        base_level = int(math.floor(estimated_level))
+        remainder = estimated_level - base_level
+        
+        if remainder > (1.0 - tolerance_ratio):
+            level = base_level + 1
+        elif remainder < tolerance_ratio:
+            level = base_level
+        else:
+            level = int(round(estimated_level))
+            
+        if level < 0 and z >= -margin:
+            level = 0
+
+        # === 新增：计算标签朝向逻辑 ===
+        orient_str = "0,0"
+        if "rvec" in center:
+            # 将相机坐标系下的旋转向量转为旋转矩阵 R_cam_marker
+            R_cm, _ = cv2.Rodrigues(center["rvec"])
+            # 变换到地面网格坐标系下 R_world_marker = R_world_cam @ R_cam_marker
+            R_wm = rotation_cw @ R_cm
+            
+            # 标签的“上方”在它自身本地坐标系中是 Y 轴负方向 (0, -1, 0)
+            # 在地面坐标系下的投影向量为 R_wm 的第 2 列取反
+            local_up_in_world = -R_wm[:, 1] 
+            
+            # 投影到地面 X-Y 平面
+            vx, vy = local_up_in_world[0], local_up_in_world[1]
+            
+            # 根据投影分量的绝对值大小判断贴近哪个轴
+            if abs(vx) > abs(vy):
+                orient_str = "1,0" if vx > 0 else "-1,0"
+            else:
+                orient_str = "0,1" if vy > 0 else "0,-1"
+        # ==================================
+
         if 0 <= row < ground_config["rows"] and 0 <= col < ground_config["cols"] and level >= 0:
-            grid[row, col] = max(grid[row, col], level)
+            # 如果当前层数更高，更新高度和朝向（如果是平铺，则直接记录）
+            if level >= grid[row, col]:
+                grid[row, col] = level
+                grid_orient[row, col] = orient_str
+            
         observations.append(
             {
                 "id": center["id"],
@@ -537,10 +617,11 @@ def build_grid_from_centers(centers, ground_config, rotation_cw, translation_cw,
                 "row": row,
                 "col": col,
                 "level": level,
+                "orientation": orient_str  # 记录到观测数据中
             }
         )
 
-    return grid, observations
+    return grid, grid_orient, observations
 
 
 def detect_top(args):
@@ -562,6 +643,7 @@ def detect_top(args):
         dist_coeffs,
         args.top_marker_size_mm,
     )
+
     grid, observations = build_grid_from_centers(
         centers,
         ground_config,
@@ -689,6 +771,7 @@ def live_top(args):
     out_json.parent.mkdir(parents=True, exist_ok=True)
 
     last_write = 0.0
+    preview_windows = set()
 
     print(f"Opened {len(live_cameras)} camera(s) at {args.resolution}. Press q/ESC in any preview window to stop.")
     try:
@@ -712,6 +795,12 @@ def live_top(args):
                     camera["dist_coeffs"],
                     args.top_marker_size_mm,
                 )
+                # === 新增：在预览画面中标记识别到的标签边框和 ID ===
+                gray_preview = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                preview_corners, preview_ids, _ = detect_markers(gray_preview, ground_config["dictionary"])
+                if preview_ids is not None:
+                    cv2.aruco.drawDetectedMarkers(frame, preview_corners, preview_ids)
+                # =================================================
                 grid, observations = build_grid_from_centers(
                     centers,
                     ground_config,
@@ -738,7 +827,13 @@ def live_top(args):
                     2,
                     cv2.LINE_AA,
                 )
-                cv2.imshow(f"{camera['name']} top", frame)
+                window_name = f"{camera['name']} top"
+                if window_name not in preview_windows:
+                    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+                    preview_windows.add(window_name)
+                preview_frame, (display_width, display_height) = resize_preview_for_display(frame)
+                cv2.resizeWindow(window_name, display_width, display_height)
+                cv2.imshow(window_name, preview_frame)
 
             if time.monotonic() - last_write >= args.update_interval_sec:
                 with out_csv.open("w", newline="", encoding="utf-8-sig") as handle:

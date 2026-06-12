@@ -11,3 +11,5 @@ outputs/
 *.pdf
 *.indd
 *.gh
+
+oldversion_aruco_grid_twin.py
