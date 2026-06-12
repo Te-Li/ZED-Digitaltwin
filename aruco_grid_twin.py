@@ -623,7 +623,6 @@ def build_grid_from_centers(centers, ground_config, rotation_cw, translation_cw,
 
     return grid, grid_orient, observations
 
-
 def detect_top(args):
     ground_config = json.loads(Path(args.ground_config).read_text(encoding="utf-8"))
     camera_matrix, dist_coeffs = load_intrinsics(args.intrinsics)
@@ -643,8 +642,9 @@ def detect_top(args):
         dist_coeffs,
         args.top_marker_size_mm,
     )
-
-    grid, observations = build_grid_from_centers(
+    
+    # 接收新增的 grid_orient
+    grid, grid_orient, observations = build_grid_from_centers(
         centers,
         ground_config,
         rotation_cw,
@@ -658,9 +658,18 @@ def detect_top(args):
         writer = csv.writer(handle)
         writer.writerows(grid.tolist())
 
+    # === 新增：保存朝向 CSV ===
+    out_orient_csv = Path(args.output_orient_csv)
+    out_orient_csv.parent.mkdir(parents=True, exist_ok=True)
+    with out_orient_csv.open("w", newline="", encoding="utf-8-sig") as handle:
+        writer = csv.writer(handle)
+        writer.writerows(grid_orient.tolist())
+    # ==========================
+
     out_obs = Path(args.output_observations)
     out_obs.write_text(json.dumps(observations, indent=2), encoding="utf-8")
     print(f"Saved grid CSV: {out_csv.resolve()}")
+    print(f"Saved orientation CSV: {out_orient_csv.resolve()}") # 新增提示
     print(f"Saved observations: {out_obs.resolve()}")
     print(f"Detected markers: {len(observations)}")
 
@@ -767,6 +776,12 @@ def live_top(args):
 
     out_csv = Path(args.output_csv)
     out_csv.parent.mkdir(parents=True, exist_ok=True)
+    
+    # === 新增：初始化实时朝向 CSV 的路径 ===
+    out_orient_csv = Path(args.output_orient_csv)
+    out_orient_csv.parent.mkdir(parents=True, exist_ok=True)
+    # ======================================
+    
     out_json = Path(args.output_observations)
     out_json.parent.mkdir(parents=True, exist_ok=True)
 
@@ -777,6 +792,9 @@ def live_top(args):
     try:
         while True:
             merged_grid = np.zeros((ground_config["rows"], ground_config["cols"]), dtype=np.int32)
+            # === 新增：初始化用于多相机融合的实时朝向网格 ===
+            merged_orient = np.full((ground_config["rows"], ground_config["cols"]), "0,0", dtype=object)
+            # =============================================
             merged_observations = []
             marker_counts = []
 
@@ -795,20 +813,30 @@ def live_top(args):
                     camera["dist_coeffs"],
                     args.top_marker_size_mm,
                 )
-                # === 新增：在预览画面中标记识别到的标签边框和 ID ===
+                
+                # === 上一步新增的画面标记预览逻辑 ===
                 gray_preview = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                 preview_corners, preview_ids, _ = detect_markers(gray_preview, ground_config["dictionary"])
                 if preview_ids is not None:
                     cv2.aruco.drawDetectedMarkers(frame, preview_corners, preview_ids)
-                # =================================================
-                grid, observations = build_grid_from_centers(
+                # ==================================
+
+                # 接收三个返回值
+                grid, grid_orient, observations = build_grid_from_centers(
                     centers,
                     ground_config,
                     camera["rotation_cw"],
                     camera["translation_cw"],
                     args.block_height_mm,
                 )
-                merged_grid = np.maximum(merged_grid, grid)
+                
+                # 多相机融合逻辑：当新网格的层数大于或等于当前记录的层数时，更新层高与朝向
+                for r in range(ground_config["rows"]):
+                    for c in range(ground_config["cols"]):
+                        if grid[r, c] >= merged_grid[r, c] and grid[r, c] > 0:
+                            merged_grid[r, c] = grid[r, c]
+                            merged_orient[r, c] = grid_orient[r, c]
+
                 marker_counts.append(f"{camera['name']}:{len(centers)}")
 
                 for obs in observations:
@@ -835,12 +863,20 @@ def live_top(args):
                 cv2.resizeWindow(window_name, display_width, display_height)
                 cv2.imshow(window_name, preview_frame)
 
+            # 定时写入本地文件
             if time.monotonic() - last_write >= args.update_interval_sec:
                 with out_csv.open("w", newline="", encoding="utf-8-sig") as handle:
                     writer = csv.writer(handle)
                     writer.writerows(merged_grid.tolist())
+                
+                # === 新增：定时将融合后的朝向网格写入第二个 CSV ===
+                with out_orient_csv.open("w", newline="", encoding="utf-8-sig") as handle:
+                    writer = csv.writer(handle)
+                    writer.writerows(merged_orient.tolist())
+                # ===============================================
+
                 out_json.write_text(json.dumps(merged_observations, indent=2), encoding="utf-8")
-                print(f"Updated live grid: {out_csv.resolve()} | {' | '.join(marker_counts)}")
+                print(f"Updated live grid: {out_csv.resolve()} & {out_orient_csv.resolve()} | {' | '.join(marker_counts)}")
                 last_write = time.monotonic()
 
             key = cv2.waitKey(1) & 0xFF
@@ -949,6 +985,7 @@ def build_parser():
     )
     detect_cmd.add_argument("--block-height-mm", type=float, default=40.0, help="Physical block height in millimeters.")
     detect_cmd.add_argument("--output-csv", default="outputs/grid_heights.csv", help="Output grid-height CSV path.")
+    detect_cmd.add_argument("--output-orient-csv", default="outputs/grid_orientations.csv", help="Output grid-orientation CSV path.")
     detect_cmd.add_argument(
         "--output-observations",
         default="outputs/top_observations.json",
@@ -1002,6 +1039,7 @@ def build_parser():
     )
     live_cmd.add_argument("--block-height-mm", type=float, default=40.0, help="Physical block height in millimeters.")
     live_cmd.add_argument("--output-csv", default="outputs/grid_heights_live.csv")
+    live_cmd.add_argument("--output-orient-csv", default="outputs/grid_orientations_live.csv", help="Output live grid-orientation CSV path.")
     live_cmd.add_argument("--output-observations", default="outputs/top_observations_live.json")
     live_cmd.add_argument("--update-interval-sec", type=float, default=0.5)
     live_cmd.set_defaults(func=live_top)

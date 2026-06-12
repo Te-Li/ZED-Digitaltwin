@@ -70,13 +70,14 @@ python zed_intrinsic_calibration.py capture --output-image captures/cam_b_top.pn
 用顶部标签图生成该相机视角下的层数表和观测 JSON。
 
 桌面版本：
+
 ```powershell
-python aruco_grid_twin.py detect-top --image captures/cam_b_top.png --intrinsics calibration/zedb_left_intrinsics.json --extrinsic calibration/cam_b_extrinsic.json --output-csv outputs/cam_b_grid.csv --output-observations outputs/cam_b_obs.json
+python aruco_grid_twin.py detect-top --image captures/cam_a_top.png --intrinsics calibration/zed1_left_intrinsics.json --extrinsic calibration/cam_a_extrinsic.json --top-marker-size-mm 30.0 --block-height-mm 40.0 --output-csv outputs/cam_a_grid.csv --output-orient-csv outputs/cam_a_orientations.csv --output-observations outputs/cam_a_obs.json
 ```
 
 地面1：1版本：
 ```powershell
-python aruco_grid_twin.py detect-top --image captures/cam_a_top.png --intrinsics calibration/zed1_left_intrinsics.json --extrinsic calibration/cam_a_extrinsic.json --top-marker-size-mm 120.0 --block-height-mm 400.0 --output-csv outputs/cam_a_grid.csv --output-observations outputs/cam_a_obs.json
+python aruco_grid_twin.py detect-top --image captures/cam_a_top.png --intrinsics calibration/zed1_left_intrinsics.json --extrinsic calibration/cam_a_extrinsic.json --top-marker-size-mm 120.0 --block-height-mm 400.0 --output-csv outputs/cam_a_grid.csv --output-orient-csv outputs/cam_a_orientations.csv --output-observations outputs/cam_a_obs.json
 ```
 
 ## 8. Merge one or more camera observations
@@ -94,11 +95,12 @@ python aruco_grid_twin.py merge-observations --observations outputs/cam_a_obs.js
 使用配置文件同时打开 1 台或任意多台 ZED，持续融合顶部标签并实时刷新表格。
 
 桌面版本：
+
 ```powershell
-python aruco_grid_twin.py live-top --camera-config live_cameras.json --output-csv outputs/grid_heights_live.csv --output-observations outputs/top_observations_live.json
+python aruco_grid_twin.py live-top --camera-config live_cameras.json --top-marker-size-mm 30.0 --block-height-mm 40.0 --output-csv outputs/grid_heights_live.csv --output-orient-csv outputs/grid_orientations_live.csv --output-observations outputs/top_observations_live.json
 ```
 
 地面1：1版本：
 ```powershell
-python aruco_grid_twin.py live-top --camera-config live_cameras.json --top-marker-size-mm 120.0 --block-height-mm 400.0 --output-csv outputs/grid_heights_live.csv --output-observations outputs/top_observations_live.json
+python aruco_grid_twin.py live-top --camera-config live_cameras.json --top-marker-size-mm 120.0 --block-height-mm 400.0 --output-csv outputs/grid_heights_live.csv --output-orient-csv outputs/grid_orientations_live.csv --output-observations outputs/top_observations_live.json
 ```
