@@ -143,69 +143,6 @@ def create_marker_bitmap(dictionary_name, marker_id, marker_px):
     return cv2.aruco.drawMarker(dictionary, marker_id, marker_px)
 
 
-def create_marker_panel(dictionary_name, marker_id, marker_px, label, border_px=None):
-    marker = create_marker_bitmap(dictionary_name, marker_id, marker_px)
-    if border_px is None:
-        border_px = max(12, marker_px // 8)
-    
-    label_height_px = max(28, marker_px // 4)
-    
-    # 页面尺寸：标记 + 左右边距 + 下方标签区
-    page_w = marker_px + border_px * 2
-    page_h = marker_px + border_px * 2 + label_height_px
-    
-    page = np.full((page_h, page_w), 255, dtype=np.uint8)
-    page[border_px : border_px + marker_px, border_px : border_px + marker_px] = marker
-
-    font_scale = max(0.35, marker_px / 160.0)
-    thickness = max(1, marker_px // 120)
-    
-    # 文字可用宽度（左右各留 border_px）
-    available_width = page_w - border_px * 2
-    text_size, baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
-    
-    # 如果文字太宽，自动缩小
-    if text_size[0] > available_width and text_size[0] > 0:
-        font_scale *= (available_width / text_size[0]) * 0.95
-        text_size, baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
-    
-    # 水平居中
-    text_x = (page_w - text_size[0]) // 2
-    # 垂直位置：标记底部 + 小间距
-    text_y = border_px + marker_px + text_size[1] + text_size[1]  // 3
-    
-    # 检查是否超出页面，必要时扩展
-    if text_y + border_px > page_h:
-        new_page_h = text_y + border_px + baseline + 4 
-        new_page = np.full((new_page_h, page_w), 255, dtype=np.uint8)
-        new_page[:page_h, :page_w] = page
-        page = new_page
-    
-    cv2.putText(
-        page, label, (text_x, text_y),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        font_scale, 0, thickness, cv2.LINE_AA,
-    )
-    return page, border_px
-
-
-def create_ground_marker_image(dictionary_name, marker_id, marker_px, page_px, label):
-    marker = create_marker_bitmap(dictionary_name, marker_id, marker_px)
-    page = np.full((page_px, page_px), 255, dtype=np.uint8)
-    offset = (page_px - marker_px) // 2
-    page[offset : offset + marker_px, offset : offset + marker_px] = marker
-    cv2.putText(
-        page,
-        label,
-        (40, page_px - 45),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        1.2,
-        0,
-        3,
-        cv2.LINE_AA,
-    )
-    return page
-
 
 def marker_panel_anchor_offset(marker_px, border_px, anchor_corner):
     corner_offset = {
@@ -296,38 +233,116 @@ def save_ground_marker_pngs(dictionary_name, placements, out_dir, marker_px, pag
         cv2.imwrite(str(out_dir / f"ground_id_{item['id']:03d}.png"), marker)
 
 
+def create_marker_panel(dictionary_name, marker_id, marker_px, label, border_px=None):
+    marker = create_marker_bitmap(dictionary_name, marker_id, marker_px)
+    if border_px is None:
+        border_px = max(16, marker_px // 6)  # 稍微加宽边距，给大字留空间
+    
+    label_height_px = max(40, marker_px // 3)  # 提高标签区域高度
+    
+    # 页面尺寸：标记 + 左右边距 + 下方标签区
+    page_w = marker_px + border_px * 2
+    page_h = marker_px + border_px * 2 + label_height_px
+    
+    page = np.full((page_h, page_w), 255, dtype=np.uint8)
+    page[border_px : border_px + marker_px, border_px : border_px + marker_px] = marker
+
+    # === 优化：显著增大字号和粗细 ===
+    font_scale = max(0.5, marker_px / 110.0)  # 字号更激进
+    thickness = max(2, marker_px / 200)       # 字体加粗
+    
+    # 文字可用宽度（左右各留 border_px）
+    available_width = page_w - border_px * 2
+    text_size, baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
+    
+    # 如果文字太宽，自动缩小
+    if text_size[0] > available_width and text_size[0] > 0:
+        font_scale *= (available_width / text_size[0]) * 0.95
+        text_size, baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
+    
+    # 水平居中
+    text_x = (page_w - text_size[0]) // 2
+    # 垂直位置：加大间距，向下平移
+    text_y = border_px + marker_px + text_size[1] + 12
+    
+    # 检查是否超出页面，必要时扩展
+    if text_y + border_px > page_h:
+        new_page_h = text_y + border_px + baseline + 4 
+        new_page = np.full((new_page_h, page_w), 255, dtype=np.uint8)
+        new_page[:page_h, :page_w] = page
+        page = new_page
+    
+    cv2.putText(
+        page, label, (text_x, text_y),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        font_scale, 0, thickness, cv2.LINE_AA,
+    )
+    return page, border_px
+
+
+def create_ground_marker_image(dictionary_name, marker_id, marker_px, page_px, label):
+    marker = create_marker_bitmap(dictionary_name, marker_id, marker_px)
+    page = np.full((page_px, page_px), 255, dtype=np.uint8)
+    offset = (page_px - marker_px) // 2
+    page[offset : offset + marker_px, offset : offset + marker_px] = marker
+    
+    # === 优化：微调单张纯标记图的文字粗细和位置 ===
+    cv2.putText(
+        page,
+        label,
+        (50, page_px - 50), # 稍微往上抬一点，防止边缘裁剪
+        cv2.FONT_HERSHEY_SIMPLEX,
+        1.2, # 字号从 1.2 放大到 1.5
+        0,
+        3,   # 粗细从 3 变到 4
+        cv2.LINE_AA,
+    )
+    return page
+
+
 def make_ground(args):
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     width_mm = args.cols * args.cell_mm
     height_mm = args.rows * args.cell_mm
+    
+    # === 核心逻辑：向内移动一行一列 (1个 cell_mm) ===
+    inner_x_min = args.cell_mm
+    inner_x_max = width_mm - args.cell_mm
+    inner_y_min = args.cell_mm
+    inner_y_max = height_mm - args.cell_mm
+
+    # 边界安全检查
+    if inner_x_max <= inner_x_min or inner_y_max <= inner_y_min:
+        raise ValueError(f"Grid columns ({args.cols}) and rows ({args.rows}) are too small to offset inward.")
+
     placements = [
         {
             "id": args.start_id + 0,
             "name": "origin",
-            "anchor_mm": [0.0, 0.0, 0.0],
+            "anchor_mm": [inner_x_min, inner_y_min, 0.0],
             "anchor_corner": args.anchor_corner,
             "yaw_deg": 0.0,
         },
         {
             "id": args.start_id + 1,
             "name": "x_axis",
-            "anchor_mm": [width_mm, 0.0, 0.0],
+            "anchor_mm": [inner_x_max, inner_y_min, 0.0],
             "anchor_corner": args.anchor_corner,
             "yaw_deg": 0.0,
         },
         {
             "id": args.start_id + 2,
             "name": "y_axis",
-            "anchor_mm": [0.0, height_mm, 0.0],
+            "anchor_mm": [inner_x_min, inner_y_max, 0.0],
             "anchor_corner": args.anchor_corner,
             "yaw_deg": 0.0,
         },
         {
             "id": args.start_id + 3,
             "name": "xy_corner",
-            "anchor_mm": [width_mm, height_mm, 0.0],
+            "anchor_mm": [inner_x_max, inner_y_max, 0.0],
             "anchor_corner": args.anchor_corner,
             "yaw_deg": 0.0,
         },
@@ -339,28 +354,28 @@ def make_ground(args):
                 {
                     "id": args.start_id + 4,
                     "name": "bottom_mid",
-                    "anchor_mm": [width_mm / 2.0, 0.0, 0.0],
+                    "anchor_mm": [(inner_x_min + inner_x_max) / 2.0, inner_y_min, 0.0],
                     "anchor_corner": args.anchor_corner,
                     "yaw_deg": 0.0,
                 },
                 {
                     "id": args.start_id + 5,
                     "name": "top_mid",
-                    "anchor_mm": [width_mm / 2.0, height_mm, 0.0],
+                    "anchor_mm": [(inner_x_min + inner_x_max) / 2.0, inner_y_max, 0.0],
                     "anchor_corner": args.anchor_corner,
                     "yaw_deg": 0.0,
                 },
                 {
                     "id": args.start_id + 6,
                     "name": "left_mid",
-                    "anchor_mm": [0.0, height_mm / 2.0, 0.0],
+                    "anchor_mm": [inner_x_min, (inner_y_min + inner_y_max) / 2.0, 0.0], 
                     "anchor_corner": args.anchor_corner,
                     "yaw_deg": 0.0,
                 },
                 {
                     "id": args.start_id + 7,
                     "name": "right_mid",
-                    "anchor_mm": [width_mm, height_mm / 2.0, 0.0],
+                    "anchor_mm": [inner_x_max, (inner_y_min + inner_y_max) / 2.0, 0.0],
                     "anchor_corner": args.anchor_corner,
                     "yaw_deg": 0.0,
                 },
@@ -945,7 +960,7 @@ def build_parser():
         help="Marker corner placed exactly on the configured grid vertex.",
     )
     make_ground_cmd.add_argument("--start-id", type=int, default=0, help="First ground marker ID.")
-    make_ground_cmd.add_argument("--page-px", type=int, default=1200, help="Ground field image long-edge size in pixels.")
+    make_ground_cmd.add_argument("--page-px", type=int, default=4000, help="Ground field image long-edge size in pixels.")
     make_ground_cmd.add_argument("--add-midpoints", action="store_true", help="Add four extra edge midpoint markers.")
     make_ground_cmd.set_defaults(func=make_ground)
 

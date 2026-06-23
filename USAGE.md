@@ -15,12 +15,12 @@ pip install -r requirements.txt
 
 桌面版本：
 ```powershell
-python aruco_grid_twin.py make-ground --cols 8 --rows 6 --anchor-corner top_right --add-midpoints
+python aruco_grid_twin.py make-ground --cols 10 --rows 6 --anchor-corner top_right --add-midpoints
 ```
 
 地面1：1版本：
 ```powershell
-python aruco_grid_twin.py make-ground --cols 8 --rows 6 --cell-mm 400.0 --marker-size-mm 120.0 --anchor-corner top_right --add-midpoints
+python aruco_grid_twin.py make-ground --cols 10 --rows 6 --cell-mm 400.0 --marker-size-mm 120.0 --anchor-corner top_right --add-midpoints
 ```
 
 `--add-midpoints` 会额外生成 4 个边中点地面标签：bottom_mid、top_mid、left_mid、right_mid。
