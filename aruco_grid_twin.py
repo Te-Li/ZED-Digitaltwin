@@ -155,17 +155,19 @@ def marker_panel_anchor_offset(marker_px, border_px, anchor_corner):
     return np.array(corner_offset[anchor_corner], dtype=np.float64)
 
 
+# === 修改核心：调整画布渲染，使左上角为物理原点 (0,0) ===
 def render_ground_field_image(
     dictionary_name,
     placements,
-    width_mm,
-    height_mm,
-    cell_x_mm,  # 升级：显式传入 X 单元格尺寸
-    cell_y_mm,  # 升级：显式传入 Y 单元格尺寸
+    x_slices,
+    y_slices,
     marker_size_mm,
     canvas_px,
     show_markers=False,
 ):
+    width_mm = x_slices[-1]
+    height_mm = y_slices[-1]
+    
     margin_mm = marker_size_mm
     canvas_width_mm = width_mm + margin_mm * 2.0
     canvas_height_mm = height_mm + margin_mm * 2.0
@@ -184,18 +186,18 @@ def render_ground_field_image(
     grid_color = (220, 220, 220)
     border_color = (180, 180, 180)
 
-    def world_to_canvas_y(y_mm):
-        return margin_px + int(round((height_mm - y_mm) * scale))
+    # 修改点：0点切换至左上角，物理 Y 的增长方向即为像素 Y 的增长方向，移除了 height_mm 反转
+    def world_to_canvas_y(y_val_mm):
+        return margin_px + int(round(y_val_mm * scale))
 
-    # === 修复：使用各自的 cell 尺寸来绘制长方形网格 ===
-    # 绘制垂直线（基于 cell_x_mm 步进）
-    for col in range(int(round(width_mm / cell_x_mm)) + 1):
-        x = margin_px + int(round(col * cell_x_mm * scale))
+    # 动态绘制垂直格线
+    for x_val in x_slices:
+        x = margin_px + int(round(x_val * scale))
         cv2.line(canvas, (x, 0), (x, canvas_h - 1), grid_color, 1, cv2.LINE_AA)
         
-    # 绘制水平线（基于 cell_y_mm 步进）
-    for row in range(int(round(height_mm / cell_y_mm)) + 1):
-        y = world_to_canvas_y(row * cell_y_mm)
+    # 动态绘制水平格线
+    for y_val in y_slices:
+        y = world_to_canvas_y(y_val)
         cv2.line(canvas, (0, y), (canvas_w - 1, y), grid_color, 1, cv2.LINE_AA)
 
     cv2.rectangle(
@@ -225,6 +227,7 @@ def render_ground_field_image(
 
     return canvas
 
+
 def save_ground_marker_pngs(dictionary_name, placements, out_dir, marker_px, page_px):
     for item in placements:
         marker = create_ground_marker_image(
@@ -250,7 +253,7 @@ def create_marker_panel(dictionary_name, marker_id, marker_px, label, border_px=
     page[border_px : border_px + marker_px, border_px : border_px + marker_px] = marker
 
     font_scale = max(0.5, marker_px / 110.0)
-    thickness = max(3, int(marker_px / 200))
+    thickness = max(1, int(marker_px / 200))
     
     available_width = page_w - border_px * 2
     text_size, baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
@@ -289,40 +292,76 @@ def create_ground_marker_image(dictionary_name, marker_id, marker_px, page_px, l
         cv2.FONT_HERSHEY_SIMPLEX,
         1.2,
         0,
-        3,
+        1,
         cv2.LINE_AA,
     )
     return page
+
+
+def parse_non_uniform_layout(layout_path):
+    with open(layout_path, "r", encoding="utf-8") as f:
+        layout = json.load(f)
+    
+    cols = layout["width"]
+    rows = layout["height"]
+    
+    col_widths = [0.0] * cols
+    row_lengths = [0.0] * rows
+    
+    for cell in layout["cells"]:
+        cx = cell["x"]
+        cy = cell["y"]
+        col_widths[cx] = float(cell["width"])
+        row_lengths[cy] = float(cell["length"])
+        
+    x_slices = [0.0]
+    for w in col_widths:
+        x_slices.append(x_slices[-1] + w)
+        
+    y_slices = [0.0]
+    for l in row_lengths:
+        y_slices.append(y_slices[-1] + l)
+        
+    return cols, rows, x_slices, y_slices
 
 
 def make_ground(args):
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    cell_x = args.cell_x_mm
-    cell_y = args.cell_y_mm
+    if args.layout_json and Path(args.layout_json).exists():
+        print(f"[{args.system_name.upper()}] Loading non-uniform grid layout: {args.layout_json}")
+        cols, rows, x_slices, y_slices = parse_non_uniform_layout(args.layout_json)
+        cell_x_legacy = (x_slices[1] - x_slices[0])
+        cell_y_legacy = (y_slices[1] - y_slices[0])
+    else:
+        print(f"[{args.system_name.upper()}] Using uniform grid parameters (Cols: {args.cols}, Rows: {args.rows})")
+        cols = args.cols
+        rows = args.rows
+        cell_x_legacy = args.cell_x_mm if args.cell_x_mm else args.cell_mm
+        cell_y_legacy = args.cell_y_mm if args.cell_y_mm else args.cell_mm
+        x_slices = [float(i * cell_x_legacy) for i in range(cols + 1)]
+        y_slices = [float(i * cell_y_legacy) for i in range(rows + 1)]
     
-    width_mm = args.cols * cell_x
-    height_mm = args.rows * cell_y
+    width_mm = x_slices[-1]
+    height_mm = y_slices[-1]
     
-    # 边界物理外轮廓内缩一个单元格
-    inner_x_min = cell_x
-    inner_x_max = width_mm - cell_x
-    inner_y_min = cell_y
-    inner_y_max = height_mm - cell_y
+    # 内缩边界物理坐标
+    inner_x_min = x_slices[1]
+    inner_x_max = x_slices[-2]
+    inner_y_min = y_slices[1]
+    inner_y_max = y_slices[-2]
 
     if inner_x_max <= inner_x_min or inner_y_max <= inner_y_min:
-        raise ValueError(f"Grid columns ({args.cols}) and rows ({args.rows}) are too small to offset inward.")
+        raise ValueError("Grid shape is too small to complete 1-cell inward offset calibration layout.")
 
-    # === 修复核心：通过计算格数索引（Index）精准定位格点 ===
-    # 找到 X 方向和 Y 方向最接近正中间的那条“格线”索引
-    mid_col_idx = args.cols // 2
-    mid_row_idx = args.rows // 2
+    mid_col_idx = cols // 2
+    mid_row_idx = rows // 2
+    grid_mid_x = x_slices[mid_col_idx]
+    grid_mid_y = y_slices[mid_row_idx]
 
-    # 根据格线索引，计算出真正落在网格顶点上的物理毫米坐标
-    grid_mid_x = mid_col_idx * cell_x
-    grid_mid_y = mid_row_idx * cell_y
-
+    # 修改点：由于原点变为左上角，物理坐标系的 Y 映射概念发生了变化：
+    # inner_y_min 代表物理顶部的内缩线 (贴近左上角)，inner_y_max 代表物理底部的内缩线
     placements = [
         {"id": args.start_id + 0, "name": "origin", "anchor_mm": [inner_x_min, inner_y_min, 0.0], "anchor_corner": args.anchor_corner, "yaw_deg": 0.0},
         {"id": args.start_id + 1, "name": "x_axis", "anchor_mm": [inner_x_max, inner_y_min, 0.0], "anchor_corner": args.anchor_corner, "yaw_deg": 0.0},
@@ -332,36 +371,31 @@ def make_ground(args):
 
     if args.add_midpoints:
         placements.extend([
-            # 底部中点：X 落在完美的格线上，Y 处于内缩下边界线
-            {"id": args.start_id + 4, "name": "bottom_mid", "anchor_mm": [grid_mid_x, inner_y_min, 0.0], "anchor_corner": args.anchor_corner, "yaw_deg": 0.0},
-            # 顶部中点：X 落在完美的格线上，Y 处于内缩上边界线
-            {"id": args.start_id + 5, "name": "top_mid", "anchor_mm": [grid_mid_x, inner_y_max, 0.0], "anchor_corner": args.anchor_corner, "yaw_deg": 0.0},
-            # 左侧中点：X 处于内缩左边界线，Y 落在完美的格线上
+            {"id": args.start_id + 4, "name": "top_mid", "anchor_mm": [grid_mid_x, inner_y_min, 0.0], "anchor_corner": args.anchor_corner, "yaw_deg": 0.0},
+            {"id": args.start_id + 5, "name": "bottom_mid", "anchor_mm": [grid_mid_x, inner_y_max, 0.0], "anchor_corner": args.anchor_corner, "yaw_deg": 0.0},
             {"id": args.start_id + 6, "name": "left_mid", "anchor_mm": [inner_x_min, grid_mid_y, 0.0], "anchor_corner": args.anchor_corner, "yaw_deg": 0.0},
-            # 右侧中点：X 处于内缩右边界线，Y 落在完美的格线上
             {"id": args.start_id + 7, "name": "right_mid", "anchor_mm": [inner_x_max, grid_mid_y, 0.0], "anchor_corner": args.anchor_corner, "yaw_deg": 0.0},
         ])
 
     field_no_labels = render_ground_field_image(
-        args.dictionary, placements, width_mm, height_mm, cell_x, cell_y, args.marker_size_mm, args.page_px, show_markers=False
+        args.dictionary, placements, x_slices, y_slices, args.marker_size_mm, args.page_px, show_markers=False
     )
     field_with_labels = render_ground_field_image(
-        args.dictionary, placements, width_mm, height_mm, cell_x, cell_y, args.marker_size_mm, args.page_px, show_markers=True
+        args.dictionary, placements, x_slices, y_slices, args.marker_size_mm, args.page_px, show_markers=True
     )
     
-    field_no_labels_path = out_dir / "field_no_labels.png"
-    field_path = out_dir / "field_with_labels.png"
-    cv2.imwrite(str(field_no_labels_path), field_no_labels)
-    cv2.imwrite(str(field_path), field_with_labels)
+    cv2.imwrite(str(out_dir / "field_no_labels.png"), field_no_labels)
+    cv2.imwrite(str(out_dir / "field_with_labels.png"), field_with_labels)
     save_ground_marker_pngs(args.dictionary, placements, out_dir, int(args.page_px * 0.72), args.page_px)
 
     config = {
         "dictionary": args.dictionary,
-        "cell_x_mm": cell_x,
-        "cell_y_mm": cell_y,
-        "cell_mm": cell_x,
-        "cols": args.cols,
-        "rows": args.rows,
+        "cols": cols,
+        "rows": rows,
+        "cell_x_mm": cell_x_legacy,
+        "cell_y_mm": cell_y_legacy,
+        "x_slices": x_slices,
+        "y_slices": y_slices,
         "width_mm": width_mm,
         "height_mm": height_mm,
         "marker_size_mm": args.marker_size_mm,
@@ -371,6 +405,7 @@ def make_ground(args):
     config_path = out_dir / "config_markers.json"
     config_path.write_text(json.dumps(config, indent=2), encoding="utf-8")
     print(f"[{args.system_name.upper()} SYSTEM] Configuration saved to: {out_dir.resolve()}")
+
 
 def make_top(args):
     out_dir = Path(args.output_dir)
@@ -499,19 +534,32 @@ def estimate_top_centers(image, dictionary_name, camera_matrix, dist_coeffs, mar
 
 
 def build_grid_from_centers(centers, ground_config, rotation_cw, translation_cw, block_height_mm):
-    grid = np.zeros((ground_config["rows"], ground_config["cols"]), dtype=np.int32)
+    rows = ground_config["rows"]
+    cols = ground_config["cols"]
+    grid = np.zeros((rows, cols), dtype=np.int32)
     observations = []
 
     tolerance_ratio = 0.4 
     margin = block_height_mm * tolerance_ratio
+
+    if "x_slices" in ground_config and "y_slices" in ground_config:
+        x_slices = ground_config["x_slices"]
+        y_slices = ground_config["y_slices"]
+    else:
+        cell_x = ground_config.get("cell_x_mm", ground_config.get("cell_mm", 40.0))
+        cell_y = ground_config.get("cell_y_mm", ground_config.get("cell_mm", 40.0))
+        x_slices = [float(i * cell_x) for i in range(cols + 1)]
+        y_slices = [float(i * cell_y) for i in range(rows + 1)]
 
     for center in centers:
         cam_xyz = center["camera_xyz_mm"].reshape(3, 1)
         world_xyz = rotation_cw @ cam_xyz + translation_cw
         x, y, z = world_xyz.reshape(3).tolist()
         
-        col = int(math.floor(x / ground_config["cell_x_mm"]))
-        row = int(math.floor(y / ground_config["cell_y_mm"]))
+        # 因为在 `render_ground_field_image` 中物理原点统一改为了左上角，
+        # 此时世界坐标系 $(x, y)$ 与切片坐标的映射逻辑天然保持一致（不再需要任何转换），二分查找继续生效。
+        col = int(np.searchsorted(x_slices, x) - 1)
+        row = int(np.searchsorted(y_slices, y) - 1)
         
         estimated_level = z / block_height_mm
         base_level = int(math.floor(estimated_level))
@@ -527,7 +575,7 @@ def build_grid_from_centers(centers, ground_config, rotation_cw, translation_cw,
         if level < 0 and z >= -margin:
             level = 0
 
-        # === 计算朝向信息 ===
+        # 计算朝向信息
         orient_str = "0,0"
         if "rvec" in center:
             R_cm, _ = cv2.Rodrigues(center["rvec"])
@@ -539,21 +587,20 @@ def build_grid_from_centers(centers, ground_config, rotation_cw, translation_cw,
             else:
                 orient_str = "0,1" if vy > 0 else "0,-1"
 
-        if 0 <= row < ground_config["rows"] and 0 <= col < ground_config["cols"] and level >= 0:
+        if 0 <= row < rows and 0 <= col < cols and level >= 0:
             if level >= grid[row, col]:
                 grid[row, col] = level
             
-        # === 核心改动：在最终生成的 JSON 数据结构里融入所有相关元数据 ===
         observations.append(
             {
-                "id": int(center["id"]),              # 明确标记 ID
+                "id": int(center["id"]),
                 "center_x_mm": x,
                 "center_y_mm": y,
                 "center_z_mm": z,
                 "row": row,
                 "col": col,
                 "level": level,
-                "orientation": orient_str             # 朝向元数据注入
+                "orientation": orient_str
             }
         )
 
@@ -580,7 +627,6 @@ def detect_top(args):
         args.top_marker_size_mm,
     )
     
-    # 接收两个返回值
     grid, observations = build_grid_from_centers(
         centers,
         ground_config,
@@ -631,29 +677,20 @@ def live_top(args):
 
     out_csv = Path(args.output_csv)
     out_csv.parent.mkdir(parents=True, exist_ok=True)
-    out_orient_csv = Path(args.output_orient_csv)
-    out_orient_csv.parent.mkdir(parents=True, exist_ok=True)
     out_json = Path(args.output_observations)
     out_json.parent.mkdir(parents=True, exist_ok=True)
 
     last_write = 0.0
     preview_windows = set()
-
-    # === 新增：缓存上一次序列化后的 JSON 字符串，用于对比防抖 ===
     last_json_str = None
-    # =========================================================
-
-    # 在图像窗口名中区分系统标识，防止两套系统共用一屏时画面覆盖
     sys_tag = args.system_name.lower()
 
     print(f"[{args.system_name.upper()} RUNNING] Press q/ESC in preview window to stop.")
     try:
         while True:
             merged_grid = np.zeros((ground_config["rows"], ground_config["cols"]), dtype=np.int32)
-            merged_orient = np.full((ground_config["rows"], ground_config["cols"]), "0,0", dtype=object)
             merged_observations = []
             marker_counts = []
-            merged_id = np.full((ground_config["rows"], ground_config["cols"]), -1, dtype=np.int32)
 
             for camera in live_cameras:
                 ok = camera["zed"].grab(camera["runtime"]) == sl.ERROR_CODE.SUCCESS
@@ -716,21 +753,16 @@ def live_top(args):
                 cv2.imshow(window_name, preview_frame)
 
             if time.monotonic() - last_write >= args.update_interval_sec:
-                # 预先生成当前数据的 JSON 字符串
-                current_json_str = json.dumps(merged_observations, indent=2), encoding="utf-8"
                 current_json_str = json.dumps(merged_observations, indent=2)
 
-                # === 修改逻辑：仅在数据改变时，重写 JSON 和 CSV 配置文件 ===
                 if current_json_str != last_json_str:
                     with out_csv.open("w", newline="", encoding="utf-8-sig") as handle:
                         writer = csv.writer(handle)
                         writer.writerows(merged_grid.tolist())
 
                     out_json.write_text(current_json_str, encoding="utf-8")
-                    last_json_str = current_json_str  # 更新缓存状态
-                    # 可以取消注释下面这行来调试查看
+                    last_json_str = current_json_str
                     print(f"[{args.system_name.upper()}] Data updated. File rewritten.")
-                # =======================================================
                 
                 last_write = time.monotonic()
 
@@ -741,6 +773,7 @@ def live_top(args):
         cv2.destroyAllWindows()
         for camera in live_cameras:
             camera["zed"].close()
+
 
 def open_zed_camera(sl, serial_number, resolution, fps):
     zed = sl.Camera()
@@ -842,7 +875,7 @@ def merge_observations(args):
 def build_parser():
     formatter = argparse.ArgumentDefaultsHelpFormatter
     parser = argparse.ArgumentParser(
-        description="ArUco grid digital-twin helper (Multi-System Edition).",
+        description="ArUco grid digital-twin helper (Top-Left Origin Hybrid Edition).",
         formatter_class=formatter,
     )
     
@@ -852,13 +885,14 @@ def build_parser():
     make_ground_cmd = sub.add_parser("make-ground", formatter_class=formatter)
     make_ground_cmd.add_argument("--output-dir", default="markers/desktop")
     make_ground_cmd.add_argument("--dictionary", default="DICT_5X5_100")
-    make_ground_cmd.add_argument("--cols", type=int, default=35, help="Grid columns (X).")
-    make_ground_cmd.add_argument("--rows", type=int, default=17, help="Grid rows (Y).")
     
-    # === 升级：解耦 X 和 Y 方向的单元格尺寸 ===
-    make_ground_cmd.add_argument("--cell-x-mm", type=float, default=40.0, help="Grid cell width (X) in mm.")
-    make_ground_cmd.add_argument("--cell-y-mm", type=float, default=60.0, help="Grid cell height (Y) in mm.")
+    make_ground_cmd.add_argument("--cols", type=int, default=35, help="Grid columns (X) for uniform mode.")
+    make_ground_cmd.add_argument("--rows", type=int, default=17, help="Grid rows (Y) for uniform mode.")
+    make_ground_cmd.add_argument("--cell-x-mm", type=float, default=40.0, help="Grid cell width (X) in mm for uniform mode.")
+    make_ground_cmd.add_argument("--cell-y-mm", type=float, default=60.0, help="Grid cell height (Y) in mm for uniform mode.")
     make_ground_cmd.add_argument("--cell-mm", type=float, default=40.0, help="Legacy single cell-mm.")
+    
+    make_ground_cmd.add_argument("--layout-json", default=None, help="Path to non-uniform grid json layout file (Overrides uniform params).")
     
     make_ground_cmd.add_argument("--marker-size-mm", type=float, default=30.0, help="Physical marker size.")
     make_ground_cmd.add_argument("--anchor-corner", default="top_right", choices=["top_left", "top_right", "bottom_right", "bottom_left"])
@@ -893,11 +927,8 @@ def build_parser():
     detect_cmd.add_argument("--top-marker-size-mm", type=float, default=30.0)
     detect_cmd.add_argument("--block-height-mm", type=float, default=40.0)
     detect_cmd.add_argument("--output-csv", default="outputs/desktop_grid_heights.csv")
-    detect_cmd.add_argument("--output-orient-csv", default="outputs/desktop_grid_orientations.csv")
     detect_cmd.add_argument("--output-observations", default="outputs/desktop_top_observations.json")
-    detect_cmd.add_argument("--output-id-csv", default="outputs/desktop_grid_ids.csv", help="Output grid-ID CSV path.")
     detect_cmd.set_defaults(func=detect_top)
-    
 
     merge_cmd = sub.add_parser("merge-observations", formatter_class=formatter)
     merge_cmd.add_argument("--ground-config", default="markers/desktop/config_markers.json")
@@ -920,10 +951,8 @@ def build_parser():
     live_cmd.add_argument("--top-marker-size-mm", type=float, default=30.0)
     live_cmd.add_argument("--block-height-mm", type=float, default=40.0)
     live_cmd.add_argument("--output-csv", default="outputs/desktop_grid_heights_live.csv")
-    live_cmd.add_argument("--output-orient-csv", default="outputs/desktop_grid_orientations_live.csv")
     live_cmd.add_argument("--output-observations", default="outputs/desktop_top_observations_live.json")
     live_cmd.add_argument("--update-interval-sec", type=float, default=0.5)
-    live_cmd.add_argument("--output-id-csv", default="outputs/desktop_grid_ids_live.csv", help="Output live grid-ID CSV path.")
     live_cmd.set_defaults(func=live_top)
 
     return parser
@@ -933,8 +962,6 @@ def main():
     parser = build_parser()
     args = parser.parse_args()
     
-    # === 核心多流沙盒隔离逻辑 ===
-    # 如果用户通过命令行明确指定了系统身份为 --system-name ground，自动完成路径的重路由重映射
     if args.system_name == "ground":
         if hasattr(args, "output_dir") and args.output_dir == "markers/desktop":
             args.output_dir = "markers/ground"
@@ -942,14 +969,10 @@ def main():
             args.ground_config = "markers/ground/config_markers.json"
         if hasattr(args, "output_csv"):
             args.output_csv = args.output_csv.replace("desktop_", "ground_")
-        if hasattr(args, "output_orient_csv"):
-            args.output_orient_csv = args.output_orient_csv.replace("desktop_", "ground_")
         if hasattr(args, "output_observations"):
             args.output_observations = args.output_observations.replace("desktop_", "ground_")
         if hasattr(args, "output_json"):
             args.output_json = args.output_json.replace("desktop_", "ground_")
-        if hasattr(args, "output_id_csv"):
-            args.output_id_csv = args.output_id_csv.replace("desktop_", "ground_")
 
     try:
         args.func(args)

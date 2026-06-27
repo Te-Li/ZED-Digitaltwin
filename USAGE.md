@@ -2,12 +2,14 @@
 
 通过在命令最前方指定 --system-name desktop（默认）或 --system-name ground，可在同一台主机上同时、独立地运行“桌面 1:40 缩尺系统”与“地面 1:1 实体系统”，两套系统的文件流、画布预览窗口和输出 CSV 完全隔离。
 
+
 参数,桌面系统 (--system-name desktop),地面系统 (--system-name ground)
-默认方格网格,40 × 60 阵列,400 × 400 阵列
-方格尺寸 (--cell-mm),40 mm,400 mm
+默认方格网格,非均匀布局 (由 JSON 定义),6 × 10 阵列 (400 × 400 均匀)
+方格尺寸 (--cell-mm),动态 (40mm / 60mm 等),400 mm
 方块高度 (--block-height-mm),40 mm,400 mm
 标签边长 (--marker-size-mm),30 mm,120 mm
 相机分辨率 / 帧率,HD1080 @ 30 FPS,HD1080 @ 30 FPS
+
 
 ## 1. Install dependencies
 安装 OpenCV ArUco 和数值计算依赖。
@@ -19,13 +21,11 @@ pip install -r requirements.txt
 ## 2. Generate the ground field image
 生成可直接打印的场地基础总览图。采用左下角为 (0, 0, 0) 的物理坐标系，标签位置已实现向内收缩移动一格（避开边缘格点顶点），右上角对齐网格顶点。地图长边分辨率默认统一加粗渲染为 4000 px 以保证清晰度。
 
-桌面版本（生成至 markers/desktop/）：
 ```powershell
-python aruco_grid_twin.py --system-name desktop make-ground --cols 35 --rows 17 --cell-x-mm 40.0 --cell-y-mm 60.0 --marker-size-mm 30.0 --add-midpoints
-```
+# 桌面版本（采用 JSON 非均匀布局定义底图）：
+python aruco_grid_twin.py --system-name desktop make-ground --layout-json urban-grid-layout.json --marker-size-mm 30.0 --add-midpoints
 
-地面 1:1 版本（生成至 markers/ground/）：
-```powershell
+# 地面 1:1 版本（保持 400mm 均匀网格，命令不变）：
 python aruco_grid_twin.py --system-name ground make-ground --cols 6 --rows 10 --cell-x-mm 400.0 --cell-y-mm 400.0 --marker-size-mm 120.0 --output-dir markers/ground --add-midpoints
 ```
 
