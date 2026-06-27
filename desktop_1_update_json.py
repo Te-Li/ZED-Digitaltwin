@@ -62,11 +62,12 @@ def update_urban_layout_via_api(observations_path, csv_path, base_url):
         print(f"API 请求失败(GET): {e}")
         return
 
-    # 为了高效查找，将 cells 列表转换为以 (x, y) 为键的字典
+    # 核心简化：因为同一坐标没有多个高度，直接以 (x, y) 对应单个 cell 字典
     cells_dict = {(cell['x'], cell['y']): cell for cell in layout_data.get('cells', [])}
-
+    
     # 4. 遍历观测数据并更新对应位置的高度 (height) 与类型 (type)
     updated_count = 0
+    
     for obs in observations:
         x = obs.get('col')
         y = obs.get('row')
@@ -76,17 +77,22 @@ def update_urban_layout_via_api(observations_path, csv_path, base_url):
         if x is None or y is None or level is None:
             continue
             
+        matched_type = get_type_by_id(element_id, element_ranges)
+        
+        # 仅匹配横纵坐标 (x, y)
         if (x, y) in cells_dict:
             target_cell = cells_dict[(x, y)]
+            
+            # 更新高度为当前观测的 level（高度不减一）
             target_cell['height'] = level
             
-            matched_type = get_type_by_id(element_id, element_ranges)
+            # 更新类型
             if matched_type:
                 target_cell['type'] = matched_type
-            
+                
             updated_count += 1
         else:
-            print(f"提示: 观测点坐标 (x:{x}, y:{y}) 在网格布局中未找到，已略过。")
+            print(f"提示: 网格布局中未找到坐标 (x:{x}, y:{y}) 的网格，已略过。")
 
     print(f"本地处理完成：成功更新了 {updated_count} 个网格的高度与类型。")
 
@@ -95,6 +101,7 @@ def update_urban_layout_via_api(observations_path, csv_path, base_url):
     print(f"正在向 API 上传修改后的非公共网格布局: {post_layout_url}")
     try:
         resp_post = requests.post(post_layout_url, json=layout_data)
+        print(f"共有 {len(layout_data['cells'])} 个网格")
         print("Layout 状态码:", resp_post.status_code)
         if resp_post.ok:
             print("Layout 响应:", resp_post.json())

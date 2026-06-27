@@ -559,6 +559,7 @@ def build_grid_from_centers(centers, ground_config, rotation_cw, translation_cw,
 
     return grid, observations
 
+
 def detect_top(args):
     ground_config = json.loads(Path(args.ground_config).read_text(encoding="utf-8"))
     camera_matrix, dist_coeffs = load_intrinsics(args.intrinsics)
@@ -638,6 +639,10 @@ def live_top(args):
     last_write = 0.0
     preview_windows = set()
 
+    # === 新增：缓存上一次序列化后的 JSON 字符串，用于对比防抖 ===
+    last_json_str = None
+    # =========================================================
+
     # 在图像窗口名中区分系统标识，防止两套系统共用一屏时画面覆盖
     sys_tag = args.system_name.lower()
 
@@ -711,11 +716,22 @@ def live_top(args):
                 cv2.imshow(window_name, preview_frame)
 
             if time.monotonic() - last_write >= args.update_interval_sec:
-                with out_csv.open("w", newline="", encoding="utf-8-sig") as handle:
-                    writer = csv.writer(handle)
-                    writer.writerows(merged_grid.tolist())
+                # 预先生成当前数据的 JSON 字符串
+                current_json_str = json.dumps(merged_observations, indent=2), encoding="utf-8"
+                current_json_str = json.dumps(merged_observations, indent=2)
 
-                out_json.write_text(json.dumps(merged_observations, indent=2), encoding="utf-8")
+                # === 修改逻辑：仅在数据改变时，重写 JSON 和 CSV 配置文件 ===
+                if current_json_str != last_json_str:
+                    with out_csv.open("w", newline="", encoding="utf-8-sig") as handle:
+                        writer = csv.writer(handle)
+                        writer.writerows(merged_grid.tolist())
+
+                    out_json.write_text(current_json_str, encoding="utf-8")
+                    last_json_str = current_json_str  # 更新缓存状态
+                    # 可以取消注释下面这行来调试查看
+                    print(f"[{args.system_name.upper()}] Data updated. File rewritten.")
+                # =======================================================
+                
                 last_write = time.monotonic()
 
             key = cv2.waitKey(1) & 0xFF
@@ -725,7 +741,6 @@ def live_top(args):
         cv2.destroyAllWindows()
         for camera in live_cameras:
             camera["zed"].close()
-
 
 def open_zed_camera(sl, serial_number, resolution, fps):
     zed = sl.Camera()
