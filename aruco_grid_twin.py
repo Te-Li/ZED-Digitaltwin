@@ -250,9 +250,7 @@ def create_marker_panel(dictionary_name, marker_id, marker_px, label, border_px=
     page[border_px : border_px + marker_px, border_px : border_px + marker_px] = marker
 
     font_scale = max(0.5, marker_px / 110.0)
-    thickness = max(2, int(marker_px / 200))
-    if thickness < 1:
-        thickness = 1
+    thickness = max(3, int(marker_px / 200))
     
     available_width = page_w - border_px * 2
     text_size, baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)

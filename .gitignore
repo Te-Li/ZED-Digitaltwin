@@ -7,9 +7,8 @@ calibration/
 captures/
 markers/
 outputs/
+archive/
 
 *.pdf
 *.indd
 *.gh
-
-oldversion_aruco_grid_twin.py
