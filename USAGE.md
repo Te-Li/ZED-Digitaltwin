@@ -26,7 +26,7 @@ pip install -r requirements.txt
 python aruco_grid_twin.py --system-name desktop make-ground --layout-json urban-grid-layout.json --marker-size-mm 30.0 --add-midpoints
 
 # 地面 1:1 版本（保持 400mm 均匀网格，命令不变）：
-python aruco_grid_twin.py --system-name ground make-ground --cols 6 --rows 10 --cell-x-mm 400.0 --cell-y-mm 400.0 --marker-size-mm 120.0 --output-dir markers/ground --add-midpoints
+python aruco_grid_twin.py --system-name ground make-ground --cols 10 --rows 6 --cell-x-mm 400.0 --cell-y-mm 400.0 --marker-size-mm 120.0 --output-dir markers/ground --add-midpoints
 ```
 
 `--add-midpoints` 会额外生成 4 个内缩边界的边中点标签。
@@ -64,12 +64,12 @@ python zed_intrinsic_calibration.py capture --output-image captures/ground_cam_b
 
 桌面版本：
 ```powershell
-python aruco_grid_twin.py --system-name desktop solve-extrinsic --image captures/desktop_cam_a_ground.png --intrinsics calibration/zed1_left_intrinsics.json --ground-config markers/desktop/config_markers.json --camera-name cam_a --output calibration/desktop_cam_a_extrinsic.json
+python aruco_grid_twin.py --system-name desktop solve-extrinsic --image captures/desktop_cam_a_ground.png --intrinsics calibration/zeda_left_intrinsics.json --ground-config markers/desktop/config_markers.json --camera-name cam_a --output calibration/desktop_cam_a_extrinsic.json
 ```
 
 地面 1:1 版本：
 ```powershell
-python aruco_grid_twin.py --system-name ground solve-extrinsic --image captures/ground_cam_b_ground.png --intrinsics calibration/zed2_left_intrinsics.json --ground-config markers/ground/config_markers.json --camera-name cam_b --output calibration/ground_cam_b_extrinsic.json
+python aruco_grid_twin.py --system-name ground solve-extrinsic --image captures/ground_cam_b_ground.png --intrinsics calibration/zedb_left_intrinsics.json --ground-config markers/ground/config_markers.json --camera-name cam_b --output calibration/ground_cam_b_extrinsic.json
 ```
 
 ## 6. Capture camera top image
@@ -85,7 +85,7 @@ python zed_intrinsic_calibration.py capture --output-image captures/desktop_cam_
 桌面版本：
 
 ```powershell
-python aruco_grid_twin.py --system-name desktop detect-top --image captures/desktop_cam_a_top.png --intrinsics calibration/zed1_left_intrinsics.json --extrinsic calibration/desktop_cam_a_extrinsic.json --ground-config markers/desktop/config_markers.json --top-marker-size-mm 30.0 --block-height-mm 40.0 --output-csv outputs/desktop_grid_heights.csv --output-observations outputs/desktop_top_observations.json
+python aruco_grid_twin.py --system-name desktop detect-top --image captures/desktop_cam_a_top.png --intrinsics calibration/zeda_left_intrinsics.json --extrinsic calibration/desktop_cam_a_extrinsic.json --ground-config markers/desktop/config_markers.json --top-marker-size-mm 30.0 --block-height-mm 40.0 --output-csv outputs/desktop_grid_heights.csv --output-observations outputs/desktop_top_observations.json
 ```
 
 地面1：1版本：

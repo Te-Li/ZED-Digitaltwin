@@ -17,14 +17,22 @@ ELEMENT_TO_VOXEL: Dict[str, VoxelType] = {
     "公告栏": VoxelType.POSTER_STAND,
     "电话亭": VoxelType.BUS_STOP,
     "公交站牌": VoxelType.BUS_STOP,
+    "树干+树池": VoxelType.TREE,
     "树干": VoxelType.TREE,
     "邮筒": VoxelType.POSTER_STAND,
     "垃圾桶": VoxelType.TRASH_BIN,
     "立展板": VoxelType.POSTER_STAND,
     "消防栓": VoxelType.BOLLARD,
     "自行车架": VoxelType.BIKE_RACK,
+    "自行车": VoxelType.BIKE_RACK,
     "桌椅单元": VoxelType.OUTDOOR_SEATING,
     "石墩": VoxelType.BOLLARD,
+    "电线杆": VoxelType.UTILITY_POLE,
+    "路灯": VoxelType.STREETLIGHT,
+    "花坛": VoxelType.PLANTER,
+    "雨篷": VoxelType.CANOPY,
+    "电压箱": VoxelType.UTILITY_POLE,
+    "信号灯": VoxelType.TRAFFIC_SIGNAL,
     "餐饮外摆": VoxelType.OUTDOOR_SEATING,
     "长凳": VoxelType.BENCH,
     "长凳2": VoxelType.BENCH,
@@ -33,14 +41,16 @@ ELEMENT_TO_VOXEL: Dict[str, VoxelType] = {
 NAME_ALIASES: Dict[str, str] = {
     "公告板": "公告栏",
     "公交站台": "公交站牌",
-    "树": "树干",
-    "a-树": "树干",
-    "a-树干": "树干",
-    "树冠": "树干",
+    "树": "树干+树池",
+    "a-树": "树干+树池",
+    "a-树干": "树干+树池",
+    "树冠": "树干+树池",
+    "树干": "树干+树池",
     "垃圾箱": "垃圾桶",
     "餐饮外摆": "桌椅单元",
     "广告": "立展板",
     "店前区广告": "自动售货机",
+    "挑檐": "雨篷",
 }
 
 # 体素类型英文键回退色（CSV 无颜色代码时使用）
@@ -180,9 +190,95 @@ def _parse_id_range(raw: str) -> tuple[Optional[int], Optional[int]]:
     return None, None
 
 
+def _is_excel_file(path: Path) -> bool:
+    with path.open("rb") as f:
+        return f.read(2) == b"PK"
+
+
+def _load_street_elements_excel(path: Path) -> StreetElementCatalog:
+    """支持误命名为 .csv 的 Excel 要素表。"""
+    try:
+        import openpyxl
+    except ImportError as exc:
+        raise ImportError("读取 Excel 要素表需要 openpyxl：pip install openpyxl") from exc
+
+    catalog = StreetElementCatalog(source_path=str(path.resolve()))
+    wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    ws = wb.active
+    rows = ws.iter_rows(values_only=True)
+    header = [str(c).strip() if c is not None else "" for c in next(rows)]
+
+    def col_idx(*names: str) -> Optional[int]:
+        for i, h in enumerate(header):
+            for name in names:
+                if h == name or name in h:
+                    return i
+        return None
+
+    idx_name = col_idx("要素")
+    if idx_name is None:
+        raise ValueError(f"{path.name} 缺少「要素」列")
+
+    idx_len = col_idx("长度")
+    idx_wid = col_idx("宽度")
+    idx_hgt = col_idx("高度")
+    idx_id = col_idx("id_range")
+    idx_nums = col_idx("nums")
+    idx_en = col_idx("英文", "english")
+    idx_color = col_idx("颜色代码", "颜色", "color")
+
+    for row in rows:
+        if not row or idx_name >= len(row):
+            continue
+        raw_name = str(row[idx_name]).strip() if row[idx_name] is not None else ""
+        if not raw_name:
+            continue
+        name = normalize_element_name(raw_name)
+
+        def _int_at(idx: Optional[int], default: int = 1) -> int:
+            if idx is None or idx >= len(row) or row[idx] in (None, ""):
+                return default
+            return int(row[idx])
+
+        def _str_at(idx: Optional[int]) -> str:
+            if idx is None or idx >= len(row) or row[idx] in (None, ""):
+                return ""
+            return str(row[idx]).strip()
+
+        color = _normalize_hex_color(_str_at(idx_color))
+        english = _str_at(idx_en)
+        spec = StreetElementSpec(
+            name=name,
+            length=_int_at(idx_len),
+            width=_int_at(idx_wid),
+            height=_int_at(idx_hgt),
+            nums=int(row[idx_nums]) if idx_nums is not None and idx_nums < len(row) and row[idx_nums] not in (None, "") else None,
+            english_name=english,
+            color_code=color,
+        )
+        id_start, id_end = _parse_id_range(_str_at(idx_id))
+        spec.id_start, spec.id_end = id_start, id_end
+        if id_start is not None and id_end is not None:
+            for eid in range(id_start, id_end + 1):
+                catalog.id_to_name[eid] = name
+        if name not in catalog.name_to_spec:
+            catalog.name_to_spec[name] = spec
+            catalog.elements.append(spec)
+            if color:
+                catalog.name_to_color[name] = color
+
+    wb.close()
+    if not catalog.elements:
+        raise ValueError(f"{path.name} 未解析到任何要素行")
+    return catalog
+
+
 def load_street_elements_csv(path: str | Path) -> StreetElementCatalog:
     """加载 street elements*.csv（含 id_range、颜色代码 列）。"""
     path = Path(path)
+    if _is_excel_file(path):
+        return _load_street_elements_excel(path)
+
     catalog = StreetElementCatalog(source_path=str(path.resolve()))
 
     with path.open("r", encoding="utf-8-sig", newline="") as f:

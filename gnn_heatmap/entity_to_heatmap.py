@@ -26,8 +26,11 @@ import requests
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE / "affordancenet"))
 
-from affordancenet.services.occupied_space_pipeline import OccupiedSpacePredictOptions, export_occupied_space_heatmap
-from affordancenet.utils.street_elements_io import find_paired_street_elements_csv
+from affordancenet.services.occupied_space_pipeline import (  # noqa: E402
+    OccupiedSpacePredictOptions,
+    export_occupied_space_heatmap,
+)
+from affordancenet.utils.street_elements_io import find_paired_street_elements_csv  # noqa: E402
 
 DEFAULT_OUT_DIR = HERE / "output"
 API_URL = "http://127.0.0.1:8000/api/simulation/public-layout/current/attraction"
@@ -113,11 +116,15 @@ def main() -> None:
         with open(out, "r", encoding="utf-8") as f:
             heatmap_data = json.load(f)
         
+        # 使用 PUT 方法向指定的 API_URL 发送数据
         resp = requests.put(API_URL, json=heatmap_data)
         
         print(f"Attraction 状态码: {resp.status_code}")
         if resp.ok:
-            print("Attraction 响应:", resp.json())
+            try:
+                print("Attraction 响应:", resp.json())
+            except Exception:
+                print("Attraction 响应成功，但返回内容非 JSON 格式:", resp.text)
         else:
             print("Attraction 失败响应:", resp.text)
     except Exception as e:

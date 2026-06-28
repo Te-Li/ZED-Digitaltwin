@@ -230,14 +230,15 @@ def render_ground_field_image(
 
 def save_ground_marker_pngs(dictionary_name, placements, out_dir, marker_px, page_px):
     for item in placements:
-        marker = create_ground_marker_image(
+        # 统一使用带有白边和文字标注的 panel 创建函数
+        marker_image, _ = create_marker_panel(
             dictionary_name,
             item["id"],
             marker_px,
-            page_px,
-            f"ID {item['id']}",
+            label=f"ID {item['id']}",
+            border_px=max(20, marker_px // 6) # 预留出足够的白边
         )
-        cv2.imwrite(str(out_dir / f"id_{item['id']:03d}.png"), marker)
+        cv2.imwrite(str(out_dir / f"id_{item['id']:03d}.png"), marker_image)
 
 
 def create_marker_panel(dictionary_name, marker_id, marker_px, label, border_px=None):
@@ -556,12 +557,14 @@ def build_grid_from_centers(centers, ground_config, rotation_cw, translation_cw,
         world_xyz = rotation_cw @ cam_xyz + translation_cw
         x, y, z = world_xyz.reshape(3).tolist()
         
-        # 因为在 `render_ground_field_image` 中物理原点统一改为了左上角，
-        # 此时世界坐标系 $(x, y)$ 与切片坐标的映射逻辑天然保持一致（不再需要任何转换），二分查找继续生效。
+        # === 修改点：因为世界坐标系 Z 轴朝下，所以物体实际高度应该为 -z ===
+        actual_height_mm = -z 
+        
         col = int(np.searchsorted(x_slices, x) - 1)
         row = int(np.searchsorted(y_slices, y) - 1)
         
-        estimated_level = z / block_height_mm
+        # 使用修正后的实际高度计算层数
+        estimated_level = actual_height_mm / block_height_mm
         base_level = int(math.floor(estimated_level))
         remainder = estimated_level - base_level
         
@@ -572,7 +575,8 @@ def build_grid_from_centers(centers, ground_config, rotation_cw, translation_cw,
         else:
             level = int(round(estimated_level))
             
-        if level < 0 and z >= -margin:
+        # 容错边界调整也使用 actual_height_mm
+        if level < 0 and actual_height_mm >= -margin:
             level = 0
 
         # 计算朝向信息
@@ -596,7 +600,7 @@ def build_grid_from_centers(centers, ground_config, rotation_cw, translation_cw,
                 "id": int(center["id"]),
                 "center_x_mm": x,
                 "center_y_mm": y,
-                "center_z_mm": z,
+                "center_z_mm": actual_height_mm,  # 保存正的高度
                 "row": row,
                 "col": col,
                 "level": level,
@@ -605,7 +609,6 @@ def build_grid_from_centers(centers, ground_config, rotation_cw, translation_cw,
         )
 
     return grid, observations
-
 
 def detect_top(args):
     ground_config = json.loads(Path(args.ground_config).read_text(encoding="utf-8"))

@@ -1,8 +1,9 @@
 import csv
 import json
 import ast
+import requests  # 新增：用于发送 HTTP 请求
 
-def process_street_elements(csv_path, json_path, output_path):
+def process_street_elements(csv_path, json_path, output_path, api_url=None):
     # 1. 读取并解析 CSV 文件
     csv_elements = []
     total_nums = 0
@@ -29,7 +30,7 @@ def process_street_elements(csv_path, json_path, output_path):
         
     filtered_json_map = {}
     for item in json_data:
-        if item['id'] > 10 and item['row'] >= 0 and item['col'] >= 0:
+        if item['id'] >= 10 and item['row'] >= 0 and item['col'] >= 0:
             filtered_json_map[item['id']] = item
 
     # 3. 匹配 CSV 和 JSON 并记录结果
@@ -44,9 +45,11 @@ def process_street_elements(csv_path, json_path, output_path):
 
         for current_id in range(elem['id_start'], elem['id_end'] + 1):
             if current_id in filtered_json_map:
+                print(filtered_json_map)
                 json_item = filtered_json_map[current_id]
                 height_matches = (elem['高度'] == json_item['level'])
                 
+                #print(current_id)
                 if is_desk_chair or height_matches:
                     matched_records[current_id] = {
                         'row': json_item['row'],
@@ -57,43 +60,34 @@ def process_street_elements(csv_path, json_path, output_path):
                         'width': elem['宽度']
                     }
 
-    # --- 修改部分：逐层向下补齐所有缺失的 level（从 upper_level - 1 一路补到 0） ---
+    # --- 逐层向下补齐所有缺失的 level ---
     if desk_chair_range:
         dc_start, dc_end = desk_chair_range
-        # 找出所有在 CSV 范围内、但输入的 JSON 里完全没出现的空闲桌椅 ID
         unused_desk_chair_ids = [
             id_for_dc for id_for_dc in range(dc_start, dc_end + 1)
             if id_for_dc not in all_input_json_ids
         ]
         
-        # 筛选出原 JSON 中所有不在地面的桌椅单元
         above_ground_chairs = {
             cid: rec for cid, rec in matched_records.items()
             if dc_start <= cid <= dc_end and rec['level'] > 0
         }
         
-        # 对每一个悬空的桌椅，向下层层补齐
         for upper_id, upper_rec in above_ground_chairs.items():
             upper_level = upper_rec['level']
-            
-            # 从 upper_level - 1 开始，倒序一直补到 0 (例如 level 2 -> 补 1 和 0)
             for target_level in range(upper_level - 1, -1, -1):
                 if unused_desk_chair_ids:
-                    # 弹出一个空闲 ID
                     fallback_id = unused_desk_chair_ids.pop(0)
-                    
-                    # 强制注册该 ID，级别设为当前的 target_level
                     matched_records[fallback_id] = {
                         'row': upper_rec['row'],
                         'col': upper_rec['col'],
-                        'level': target_level,  # 逐层递减补齐
+                        'level': target_level,
                         'orientation': upper_rec['orientation'],
                         'length': upper_rec['length'],
                         'width': upper_rec['width']
                     }
                 else:
                     print(f"警告: 试图为桌椅 (原ID: {upper_id}) 补齐 level: {target_level}，但空闲桌椅 ID 已用尽！")
-    # ------------------------------------------------------------------------
 
     # 4 & 5. 根据每个品类的起始 id 和数量按顺序生成列表
     output_list = []
@@ -138,12 +132,31 @@ def process_street_elements(csv_path, json_path, output_path):
     # 6. 将结果写入新的 JSON 文件
     with open(output_path, 'w', encoding='utf-8-sig') as f:
         json.dump(output_list, f, indent=2, ensure_ascii=False)
-        
-    print(f"处理完成！已生成文件：{output_path}，共包含 {len(output_list)} 个元素。")
+    print(f"本地处理完成！已生成文件：{output_path}，共包含 {len(output_list)} 个元素。")
+
+    # --- 新增部分：将数据 POST 到 API ---
+    if api_url:
+        print(f"正在向接口发送数据: {api_url} ...")
+        headers = {'Content-Type': 'application/json'}
+        try:
+            # 直接使用生成的 output_list 对象作为 JSON 体发送
+            response = requests.post(api_url, json=output_list, headers=headers)
+            
+            # 检查响应状态码
+            if response.status_code in [200, 201]:
+                print("成功！数据已成功 POST 到服务器。")
+                print("服务器返回:", response.text)
+            else:
+                print(f"失败！服务器返回状态码: {response.status_code}")
+                print("错误信息:", response.text)
+        except requests.exceptions.RequestException as e:
+            print(f"请求发生异常: {e}")
 
 # --- 运行脚本 ---
 csv_filename = "street elements.csv"
 json_filename = "outputs/ground_top_observations_live.json"
 output_filename = "outputs/model_plane.json"
 
-process_street_elements(csv_filename, json_filename, output_filename)
+api_endpoint = "http://localhost:8000/api/static/model-plane" 
+
+process_street_elements(csv_filename, json_filename, output_filename, api_url=api_endpoint)

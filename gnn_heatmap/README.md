@@ -8,7 +8,7 @@
 pip install -r requirements.txt
 ```
 
-仅需 `numpy`、`scipy`，无需 PyTorch 或 GNN 模型权重。
+仅需 `numpy`、`scipy`；若要素表为 Excel 格式（`.csv` 实为 xlsx），还需 `openpyxl`。
 
 ## 用法
 
@@ -16,8 +16,8 @@ pip install -r requirements.txt
 
 | 文件 | 说明 |
 |------|------|
-| `occupied_space.json` | 场景实体格坐标 |
-| `street elements.csv` | 要素命名表（实体类型以此为准） |
+| `occupied_space(1).json` | 场景实体格坐标 |
+| `street elements(2).csv` | 要素命名表（19 种要素 + 颜色代码，推荐） |
 
 ```bash
 python entity_to_heatmap.py -i occupied_space.json
@@ -36,10 +36,19 @@ python entity_to_heatmap.py -i your_scene.json -o output/result.heatmap.json
 自动售货机,3,2,6,"[10, 11]",2,,vending_machine,,#E0E0E0
 公告栏,6,1,5,"[12, 13]",2,,display_stand,,#FFA726
 电话亭,3,3,5,"[14, 15]",2,,telephone_kiosk,,#1565C0
-树干,1,1,5,"[18, 21]",4,,tree,,#2E7D32
+树干+树池,1,1,5,"[18, 21]",4,,tree,,#2E7D32
 邮筒,1,1,4,"[22, 25]",4,,pillar_box,,#C62828
 ...
+自行车,3,1,2,,,,bicycle,,#5C6BC0
+电线杆,1,1,6,,,,utility_pole,,#9E9E9E
+路灯,1,1,5,,,,streetlight,,#FDD835
+花坛,1,1,2,,,,flower_bed,,#66BB6A
+雨篷,2,2,4,,,,awning,,#795548
+电压箱,2,2,3,,,,electrical_box,,#546E7A
+信号灯,1,1,4,,,,traffic_signal,,#D32F2F
 ```
+
+共 19 种要素。旧 JSON 中的「树干」会自动归一化为「树干+树池」。
 
 实体颜色**直接从 CSV「颜色代码」列读取**，无需在代码里硬编码。
 

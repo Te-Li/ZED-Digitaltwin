@@ -54,6 +54,9 @@ ENTITY_POSE: Dict[VoxelType, str] = {
     VoxelType.BIKE_RACK: "leaning",
     VoxelType.BUS_STOP: "standing",
     VoxelType.STREETLIGHT: "walking",
+    VoxelType.TRAFFIC_SIGNAL: "standing",
+    VoxelType.CANOPY: "standing",
+    VoxelType.UTILITY_POLE: "walking",
 }
 
 

@@ -16,6 +16,7 @@ MODEL_PLANE_JSON = "outputs/model_plane.json"
 OCCUPIED_SPACE_JSON = "outputs/occupied_space.json"
 
 # 接口配置
+MODEL_PLANE_API_URL = f"http://{SERVER_IP}:{SERVER_PORT}/api/static/model-plane"  # ✨ 新增：步骤 1 的独立 POST 接口
 LAYOUT_API_URL = f"http://{SERVER_IP}:{SERVER_PORT}/api/simulation/public-layout/current"
 HEATMAP_API_URL = f"http://{SERVER_IP}:{SERVER_PORT}/api/simulation/public-layout/current/attraction"
 
@@ -57,6 +58,7 @@ def run_pipeline():
         return
 
     print("🚀 实时空间集成流水线控制脚本已启动...")
+    print(f"  - 基础平面模型 POST 接口: {MODEL_PLANE_API_URL}") # ✨ 新增打印
     print(f"  - 布局同步接口: {LAYOUT_API_URL}")
     print(f"  - 热力同步接口: {HEATMAP_API_URL}\n")
     
@@ -89,8 +91,9 @@ def run_pipeline():
             # 执行到这里说明有新数据，开启全新的一轮流水线计算
             print("\n--- ⚡ 检测到数据更新，开始全链路同步与计算 ---")
             
-            print("[Step 1/3] 🔄 正在解析本地观察文件至基础平面模型...")
-            process_street_elements(CSV_FILE, LIVE_JSON, MODEL_PLANE_JSON)
+            print("[Step 1/3] 🔄 正在解析本地观察文件并自动 POST 基础平面模型...")
+            # ✨ 核心修改：这里将 MODEL_PLANE_API_URL 作为第四个参数传给步骤 1 
+            process_street_elements(CSV_FILE, LIVE_JSON, MODEL_PLANE_JSON, api_url=MODEL_PLANE_API_URL)
 
             # ----------------------------------------------------------------
             # 步骤 2: 从 API 获取当前布局 -> 计算实体体素 -> 同步回服务器

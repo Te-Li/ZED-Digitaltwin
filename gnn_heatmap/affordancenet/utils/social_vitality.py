@@ -78,23 +78,22 @@ def formula_computed_text(
         f"N={voxel_count}, 覆盖(>{coverage_threshold})={coverage * 100:.1f}%"
     )
 
+
 def vitality_plotly_annotation(metrics: SocialVitalityMetrics, region_label: str) -> dict:
     """Plotly 布局 annotation：公式 + 结果。"""
-    computed_text = formula_computed_text(
-        index=metrics.index,
-        mean_intensity=metrics.mean_intensity,
-        hotspot_mean=metrics.hotspot_mean,
-        hotspot_fraction=metrics.hotspot_fraction,
-        coverage=metrics.coverage,
-        coverage_threshold=metrics.coverage_threshold,
-        voxel_count=metrics.voxel_count,
-    )
-    
     return dict(
         text=(
             f"<b>社交活力指数 SVI = {metrics.index:.3f}</b>（{region_label} · {metrics.level_cn}）<br>"
             f"{formula_general_text()}<br>"
-            f"<b>本次计算：</b>{computed_text}"
+            f"""<b>本次计算：</b>{formula_computed_text(
+                index=metrics.index,
+                mean_intensity=metrics.mean_intensity,
+                hotspot_mean=metrics.hotspot_mean,
+                hotspot_fraction=metrics.hotspot_fraction,
+                coverage=metrics.coverage,
+                coverage_threshold=metrics.coverage_threshold,
+                voxel_count=metrics.voxel_count,
+            )}"""
         ),
         xref="paper",
         yref="paper",

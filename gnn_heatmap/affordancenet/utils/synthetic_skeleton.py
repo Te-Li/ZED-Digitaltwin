@@ -42,6 +42,9 @@ ATTRACTOR_TYPES: Set[VoxelType] = {
     VoxelType.PLANTER,
     VoxelType.STREETLIGHT,
     VoxelType.BIKE_RACK,
+    VoxelType.TRAFFIC_SIGNAL,
+    VoxelType.CANOPY,
+    VoxelType.UTILITY_POLE,
 }
 
 FLOOR_CN = set(ZONE_FLOOR_CN.keys())

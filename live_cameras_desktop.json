@@ -1,10 +1,10 @@
 {
   "cameras": [
     {
-      "name": "cam_b",
-      "camera": "zed2",
-      "intrinsics": "calibration/zedb_left_intrinsics.json",
-      "extrinsic": "calibration/cam_b_extrinsic.json"
+      "name": "cam_a",
+      "camera": "zed1",
+      "intrinsics": "calibration/zeda_left_intrinsics.json",
+      "extrinsic": "calibration/desktop_cam_a_extrinsic.json"
     }
   ]
 }
