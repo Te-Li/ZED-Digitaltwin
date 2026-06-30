@@ -53,7 +53,7 @@ python aruco_grid_twin.py --system-name ground make-top --count 90 --start-id 10
 
 ```powershell
 # 桌面相机捕捉
-python zed_intrinsic_calibration.py capture --output-image captures/desktop_cam_a_ground.png --camera zed1
+python zed_intrinsic_calibration.py capture --output-image captures/desktop_cam_c_ground.png --camera zed3
 
 # 地面相机捕捉
 python zed_intrinsic_calibration.py capture --output-image captures/ground_cam_b_ground.png --camera zed2
@@ -64,7 +64,7 @@ python zed_intrinsic_calibration.py capture --output-image captures/ground_cam_b
 
 桌面版本：
 ```powershell
-python aruco_grid_twin.py --system-name desktop solve-extrinsic --image captures/desktop_cam_a_ground.png --intrinsics calibration/zeda_left_intrinsics.json --ground-config markers/desktop/config_markers.json --camera-name cam_a --output calibration/desktop_cam_a_extrinsic.json
+python aruco_grid_twin.py --system-name desktop solve-extrinsic --image captures/desktop_cam_c_ground.png --intrinsics calibration/zedc_left_intrinsics.json --ground-config markers/desktop/config_markers.json --camera-name cam_c --output calibration/desktop_cam_c_extrinsic.json
 ```
 
 地面 1:1 版本：

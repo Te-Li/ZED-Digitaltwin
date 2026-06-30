@@ -30,14 +30,14 @@ python zed_intrinsic_calibration.py make-board --output calibration/neo_charuco_
 用指定 SN 的 ZED 左目采集 20-40 张不同角度的标定板图片。
 
 ```powershell
-python zed_intrinsic_calibration.py capture --output-dir calibration/images --camera zed1
+python zed_intrinsic_calibration.py capture --output-dir calibration/images3 --camera zed3
 ```
 
 ## 3. Calibrate ZED left-camera intrinsics
 根据采集图片计算左目 OpenCV 内参。
 
 ```powershell
-python zed_intrinsic_calibration.py calibrate --image-dir calibration/images --output calibration/zed_left_intrinsics.json
+python zed_intrinsic_calibration.py calibrate --image-dir calibration/images1 --output calibration/zeda_left_intrinsics.json
 ```
 ### 标定质量评估
 

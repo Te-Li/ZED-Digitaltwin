@@ -57,13 +57,34 @@ def get_aruco_dict(name):
 
 
 def detect_markers(gray, dictionary_name):
+    """
+    Detect ArUco markers and refine their corners to sub-pixel accuracy when
+    the installed OpenCV version supports it.
+
+    The corner refinement is especially useful for calibration images, because
+    solvePnP is sensitive to even a few pixels of corner error.
+    """
     dictionary = get_aruco_dict(dictionary_name)
     params = cv2.aruco.DetectorParameters()
+
+    if hasattr(cv2.aruco, "CORNER_REFINE_SUBPIX"):
+        params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
+        if hasattr(params, "cornerRefinementWinSize"):
+            params.cornerRefinementWinSize = 5
+        if hasattr(params, "cornerRefinementMaxIterations"):
+            params.cornerRefinementMaxIterations = 30
+        if hasattr(params, "cornerRefinementMinAccuracy"):
+            params.cornerRefinementMinAccuracy = 0.01
+
     if hasattr(cv2.aruco, "ArucoDetector"):
         detector = cv2.aruco.ArucoDetector(dictionary, params)
         corners, ids, rejected = detector.detectMarkers(gray)
     else:
-        corners, ids, rejected = cv2.aruco.detectMarkers(gray, dictionary, parameters=params)
+        corners, ids, rejected = cv2.aruco.detectMarkers(
+            gray,
+            dictionary,
+            parameters=params,
+        )
     return corners, ids, rejected
 
 
@@ -88,12 +109,54 @@ def invert_transform(rotation, translation):
 
 
 def marker_local_corners(size_mm):
+    """
+    Return the marker's four corners in its local plane.
+
+    Global/world convention used by this script:
+        X: increases to the right
+        Y: increases downward
+        Z: increases downward from the ground plane
+
+    The order is identical to OpenCV ArUco detection output:
+        top-left, top-right, bottom-right, bottom-left.
+
+    This convention must agree with render_ground_field_image(), which maps a
+    larger world Y to a lower image pixel Y. The previous implementation had
+    the marker-local Y direction reversed, causing the modelled marker corners
+    to disagree with the rendered/physical layout and potentially producing
+    large reprojection residuals.
+    """
     half = size_mm / 2.0
     return np.array(
         [
-            [-half, half, 0.0],   # top-left
-            [half, half, 0.0],    # top-right
-            [half, -half, 0.0],   # bottom-right
+            [-half, -half, 0.0],  # top-left
+            [ half, -half, 0.0],  # top-right
+            [ half,  half, 0.0],  # bottom-right
+            [-half,  half, 0.0],  # bottom-left
+        ],
+        dtype=np.float64,
+    )
+
+
+def marker_local_corners_ippe_square(size_mm):
+    """
+    Canonical square-marker object points required by OpenCV's
+    SOLVEPNP_IPPE_SQUARE solver.
+
+    Important: this is intentionally different from marker_local_corners().
+    marker_local_corners() follows this project's *world/grid* convention
+    (X right, Y down). IPPE_SQUARE, however, requires its documented local
+    marker convention (X right, Y up) in the exact order:
+    top-left, top-right, bottom-right, bottom-left.
+
+    Keep this helper only for estimating an individual top-marker pose.
+    """
+    half = size_mm / 2.0
+    return np.array(
+        [
+            [-half,  half, 0.0],  # top-left
+            [ half,  half, 0.0],  # top-right
+            [ half, -half, 0.0],  # bottom-right
             [-half, -half, 0.0],  # bottom-left
         ],
         dtype=np.float64,
@@ -432,30 +495,60 @@ def make_top(args):
 
 
 def solve_extrinsic(args):
+    """
+    Estimate the camera extrinsic transform from known ground ArUco markers.
+
+    In addition to the global RMS reprojection error, this version writes:
+      - per-marker and per-corner reprojection errors;
+      - a visual debug image where:
+          green filled dot = detected corner,
+          red ring = reprojected corner,
+          yellow line = residual vector;
+      - optional point-level RANSAC inlier information.
+
+    By default, ordinary solvePnP is used so that layout/configuration errors
+    are visible instead of being silently excluded. Use --use-ransac only
+    after the physical/configuration setup has been checked.
+    """
+    require_opencv()
+
     config = json.loads(Path(args.ground_config).read_text(encoding="utf-8"))
     camera_matrix, dist_coeffs = load_intrinsics(args.intrinsics)
+
     image = cv2.imread(args.image)
     if image is None:
         raise RuntimeError(f"Could not read image: {args.image}")
+
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     corners, ids, _ = detect_markers(gray, config["dictionary"])
     if ids is None:
         raise RuntimeError("No ArUco markers detected.")
 
-    id_to_corners = {int(marker_id[0]): corner.reshape(4, 2) for marker_id, corner in zip(ids, corners)}
+    detected_marker_ids = [int(marker_id) for marker_id in ids.reshape(-1)]
+    id_to_corners = {
+        int(marker_id[0]): corner.reshape(4, 2).astype(np.float64)
+        for marker_id, corner in zip(ids, corners)
+    }
+
     object_points = []
     image_points = []
     used_ids = []
+    marker_point_ranges = {}
+
     for marker in config["ground_markers"]:
         marker_id = int(marker["id"])
         if marker_id not in id_to_corners:
             continue
+
         if "anchor_mm" in marker:
             world_corners = marker_world_corners_from_anchor(
                 marker["anchor_mm"],
                 config["marker_size_mm"],
                 marker.get("yaw_deg", 0.0),
-                config.get("ground_anchor_corner", "top_right"),
+                marker.get(
+                    "anchor_corner",
+                    config.get("ground_anchor_corner", "top_right"),
+                ),
             )
         else:
             world_corners = marker_world_corners_from_center(
@@ -463,37 +556,195 @@ def solve_extrinsic(args):
                 config["marker_size_mm"],
                 marker.get("yaw_deg", 0.0),
             )
+
+        start = len(object_points)
         object_points.extend(world_corners.tolist())
         image_points.extend(id_to_corners[marker_id].tolist())
+        marker_point_ranges[marker_id] = (start, start + 4)
         used_ids.append(marker_id)
 
     if len(used_ids) < args.min_markers:
-        raise RuntimeError(f"Only {len(used_ids)} calibration markers detected. Need at least {args.min_markers}.")
+        raise RuntimeError(
+            f"Only {len(used_ids)} calibration markers detected. "
+            f"Need at least {args.min_markers}. "
+            f"Detected IDs: {detected_marker_ids}; used ground IDs: {used_ids}."
+        )
 
-    ok, rvec, tvec = cv2.solvePnP(
-        np.asarray(object_points, dtype=np.float64),
-        np.asarray(image_points, dtype=np.float64),
-        camera_matrix,
-        dist_coeffs,
-        flags=cv2.SOLVEPNP_ITERATIVE,
-    )
-    if not ok:
-        raise RuntimeError("solvePnP failed.")
+    object_points_np = np.asarray(object_points, dtype=np.float64)
+    image_points_np = np.asarray(image_points, dtype=np.float64)
+
+    solver_name = "SOLVEPNP_ITERATIVE"
+    inlier_indices = np.arange(len(object_points_np), dtype=np.int32)
+
+    if args.use_ransac:
+        solver_name = "SOLVEPNP_RANSAC_ITERATIVE"
+        ok, rvec, tvec, inliers = cv2.solvePnPRansac(
+            object_points_np,
+            image_points_np,
+            camera_matrix,
+            dist_coeffs,
+            iterationsCount=200,
+            reprojectionError=args.ransac_reprojection_error,
+            confidence=0.999,
+            flags=cv2.SOLVEPNP_ITERATIVE,
+        )
+        if not ok or inliers is None or len(inliers) < 6:
+            raise RuntimeError(
+                "solvePnPRansac failed or returned too few inlier points. "
+                "Check intrinsics, marker layout, marker IDs, and image quality."
+            )
+
+        inlier_indices = inliers.reshape(-1).astype(np.int32)
+
+        # Refine the RANSAC result using only the inlier corner correspondences.
+        if hasattr(cv2, "solvePnPRefineLM"):
+            rvec, tvec = cv2.solvePnPRefineLM(
+                object_points_np[inlier_indices],
+                image_points_np[inlier_indices],
+                camera_matrix,
+                dist_coeffs,
+                rvec,
+                tvec,
+            )
+    else:
+        ok, rvec, tvec = cv2.solvePnP(
+            object_points_np,
+            image_points_np,
+            camera_matrix,
+            dist_coeffs,
+            flags=cv2.SOLVEPNP_ITERATIVE,
+        )
+        if not ok:
+            raise RuntimeError("solvePnP failed.")
 
     projected, _ = cv2.projectPoints(
-        np.asarray(object_points, dtype=np.float64), rvec, tvec, camera_matrix, dist_coeffs
+        object_points_np,
+        rvec,
+        tvec,
+        camera_matrix,
+        dist_coeffs,
     )
-    error = np.linalg.norm(projected.reshape(-1, 2) - np.asarray(image_points), axis=1)
+    projected_np = projected.reshape(-1, 2)
+
+    residual_vectors_px = projected_np - image_points_np
+    error_px = np.linalg.norm(residual_vectors_px, axis=1)
+
+    per_marker_error = {}
+    for marker_id in used_ids:
+        start, end = marker_point_ranges[marker_id]
+        marker_errors = error_px[start:end]
+        marker_residual_vectors = residual_vectors_px[start:end]
+        marker_inliers = np.isin(
+            np.arange(start, end),
+            inlier_indices,
+        ).tolist()
+
+        per_marker_error[str(marker_id)] = {
+            "corner_errors_px": [float(value) for value in marker_errors],
+            "corner_residual_vectors_px": [
+                [float(vec[0]), float(vec[1])]
+                for vec in marker_residual_vectors
+            ],
+            "mean_error_px": float(np.mean(marker_errors)),
+            "max_error_px": float(np.max(marker_errors)),
+            "rms_error_px": float(np.sqrt(np.mean(marker_errors ** 2))),
+            "corner_is_ransac_inlier": marker_inliers,
+        }
+
     rotation = np.asarray(rodrigues_to_list(rvec), dtype=np.float64)
     cam_to_world_r, cam_to_world_t = invert_transform(rotation, tvec)
+
+    out = Path(args.output)
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    debug_path = (
+        Path(args.debug_output)
+        if args.debug_output
+        else out.with_name(out.stem + "_reprojection_debug.png")
+    )
+    debug_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Write a visual overlay for diagnosing systematic or per-marker errors.
+    debug_image = image.copy()
+    cv2.aruco.drawDetectedMarkers(debug_image, corners, ids)
+
+    for marker_id in used_ids:
+        start, end = marker_point_ranges[marker_id]
+
+        for detected_pt, reproj_pt in zip(
+            image_points_np[start:end],
+            projected_np[start:end],
+        ):
+            detected_xy = tuple(np.round(detected_pt).astype(int))
+            reproj_xy = tuple(np.round(reproj_pt).astype(int))
+
+            # Green: detected ArUco corner. Red: PnP reprojection.
+            cv2.circle(debug_image, detected_xy, 5, (0, 255, 0), -1)
+            cv2.circle(debug_image, reproj_xy, 7, (0, 0, 255), 2)
+            cv2.line(
+                debug_image,
+                detected_xy,
+                reproj_xy,
+                (0, 255, 255),
+                1,
+                cv2.LINE_AA,
+            )
+
+        marker_center = np.mean(image_points_np[start:end], axis=0)
+        label_xy = tuple(np.round(marker_center).astype(int))
+        marker_rms = per_marker_error[str(marker_id)]["rms_error_px"]
+        marker_max = per_marker_error[str(marker_id)]["max_error_px"]
+
+        cv2.putText(
+            debug_image,
+            f"ID {marker_id}: RMS {marker_rms:.2f}px, max {marker_max:.2f}px",
+            (label_xy[0], max(25, label_xy[1] - 12)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            (255, 0, 255),
+            2,
+            cv2.LINE_AA,
+        )
+
+    overall_rms_error_px = float(np.sqrt(np.mean(error_px ** 2)))
+    cv2.putText(
+        debug_image,
+        f"Overall RMS: {overall_rms_error_px:.3f}px | {solver_name}",
+        (20, 36),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.85,
+        (0, 0, 255),
+        2,
+        cv2.LINE_AA,
+    )
+    cv2.imwrite(str(debug_path), debug_image)
 
     result = {
         "camera_name": args.camera_name,
         "intrinsics": str(Path(args.intrinsics).resolve()),
         "ground_config": str(Path(args.ground_config).resolve()),
         "image": str(Path(args.image).resolve()),
+        "image_size_px": {
+            "width": int(image.shape[1]),
+            "height": int(image.shape[0]),
+        },
+        "detected_marker_ids": detected_marker_ids,
         "used_ground_ids": used_ids,
-        "rms_reprojection_error_px": float(np.sqrt(np.mean(error**2))),
+        "solver": solver_name,
+        "ransac_enabled": bool(args.use_ransac),
+        "ransac_reprojection_error_px": (
+            float(args.ransac_reprojection_error) if args.use_ransac else None
+        ),
+        "ransac_inlier_point_indices": [
+            int(index) for index in inlier_indices
+        ],
+        "ransac_inlier_point_count": int(len(inlier_indices)),
+        "total_point_count": int(len(object_points_np)),
+        "rms_reprojection_error_px": overall_rms_error_px,
+        "max_reprojection_error_px": float(np.max(error_px)),
+        "mean_reprojection_error_px": float(np.mean(error_px)),
+        "per_marker_reprojection_error_px": per_marker_error,
+        "reprojection_debug_image": str(debug_path.resolve()),
         "world_to_camera": {
             "rotation": rotation.tolist(),
             "translation_mm": np.asarray(tvec).reshape(3).tolist(),
@@ -503,21 +754,60 @@ def solve_extrinsic(args):
             "translation_mm": cam_to_world_t.reshape(3).tolist(),
         },
     }
-    out = Path(args.output)
-    out.parent.mkdir(parents=True, exist_ok=True)
+
     out.write_text(json.dumps(result, indent=2), encoding="utf-8")
-    print(f"Saved camera extrinsic: {out.resolve()} | RMS Error: {result['rms_reprojection_error_px']:.3f} px")
+
+    print(f"Detected ArUco IDs: {detected_marker_ids}")
+    print(f"Used ground IDs: {used_ids}")
+    for marker_id in used_ids:
+        item = per_marker_error[str(marker_id)]
+        print(
+            f"  ID {marker_id}: "
+            f"RMS={item['rms_error_px']:.3f}px, "
+            f"mean={item['mean_error_px']:.3f}px, "
+            f"max={item['max_error_px']:.3f}px"
+        )
+    print(
+        f"Saved camera extrinsic: {out.resolve()} | "
+        f"RMS Error: {overall_rms_error_px:.3f} px"
+    )
+    print(f"Saved reprojection debug image: {debug_path.resolve()}")
 
 
-def estimate_top_centers(image, dictionary_name, camera_matrix, dist_coeffs, marker_size_mm):
+def estimate_top_centers(
+    image,
+    dictionary_name,
+    camera_matrix,
+    dist_coeffs,
+    marker_size_mm,
+    exclude_ids=None,
+):
+    """Estimate the 3D center of each visible top marker in camera coordinates.
+
+    marker_local_corners() must NOT be used here: it follows the grid/world
+    Y-down convention adopted for ground-layout modelling. OpenCV's specialized
+    SOLVEPNP_IPPE_SQUARE solver requires the canonical marker-local Y-up
+    coordinates supplied by marker_local_corners_ippe_square(). Mixing the two
+    gives a low ground-calibration RMS but an invalid top-marker tvec, which
+    then makes world/grid mapping appear completely wrong.
+    """
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     corners, ids, _ = detect_markers(gray, dictionary_name)
     if ids is None:
         return []
+
+    excluded = set() if exclude_ids is None else {int(value) for value in exclude_ids}
     marker_size = float(marker_size_mm)
     centers = []
-    object_points = marker_local_corners(marker_size)
+
+    # Required canonical point order for cv2.SOLVEPNP_IPPE_SQUARE.
+    object_points = marker_local_corners_ippe_square(marker_size)
+
     for marker_id, marker_corners in zip(ids.reshape(-1), corners):
+        marker_id = int(marker_id)
+        if marker_id in excluded:
+            continue
+
         ok, rvec, tvec = cv2.solvePnP(
             object_points,
             marker_corners.reshape(4, 2).astype(np.float64),
@@ -525,12 +815,13 @@ def estimate_top_centers(image, dictionary_name, camera_matrix, dist_coeffs, mar
             dist_coeffs,
             flags=cv2.SOLVEPNP_IPPE_SQUARE,
         )
-        if ok:
+        if ok and float(tvec[2]) > 0.0:
             centers.append({
-                "id": int(marker_id), 
-                "camera_xyz_mm": np.asarray(tvec).reshape(3),
-                "rvec": rvec
+                "id": marker_id,
+                "camera_xyz_mm": np.asarray(tvec, dtype=np.float64).reshape(3),
+                "rvec": rvec,
             })
+
     return centers
 
 
@@ -622,12 +913,14 @@ def detect_top(args):
     if image is None:
         raise RuntimeError(f"Could not read image: {args.image}")
 
+    ground_marker_ids = {int(marker["id"]) for marker in ground_config["ground_markers"]}
     centers = estimate_top_centers(
         image,
         ground_config["dictionary"],
         camera_matrix,
         dist_coeffs,
         args.top_marker_size_mm,
+        exclude_ids=ground_marker_ids,
     )
     
     grid, observations = build_grid_from_centers(
@@ -703,12 +996,17 @@ def live_top(args):
 
                 camera["zed"].retrieve_image(camera["image"], sl.VIEW.LEFT)
                 frame = cv2.cvtColor(camera["image"].get_data(), cv2.COLOR_BGRA2BGR)
+                ground_marker_ids = {
+                    int(marker["id"])
+                    for marker in ground_config["ground_markers"]
+                }
                 centers = estimate_top_centers(
                     frame,
                     ground_config["dictionary"],
                     camera["intrinsics"],
                     camera["dist_coeffs"],
                     args.top_marker_size_mm,
+                    exclude_ids=ground_marker_ids,
                 )
                 
                 gray_preview = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -920,6 +1218,28 @@ def build_parser():
     solve_cmd.add_argument("--camera-name", required=True)
     solve_cmd.add_argument("--output", required=True)
     solve_cmd.add_argument("--min-markers", type=int, default=4)
+    solve_cmd.add_argument(
+        "--debug-output",
+        default=None,
+        help=(
+            "Optional path for the reprojection diagnostic PNG. "
+            "Defaults to <output_stem>_reprojection_debug.png."
+        ),
+    )
+    solve_cmd.add_argument(
+        "--use-ransac",
+        action="store_true",
+        help=(
+            "Use solvePnPRansac and refine with its inlier corners. "
+            "Keep disabled during initial diagnosis so layout errors remain visible."
+        ),
+    )
+    solve_cmd.add_argument(
+        "--ransac-reprojection-error",
+        type=float,
+        default=3.0,
+        help="RANSAC inlier threshold in pixels; only used with --use-ransac.",
+    )
     solve_cmd.set_defaults(func=solve_extrinsic)
 
     detect_cmd = sub.add_parser("detect-top", formatter_class=formatter)
