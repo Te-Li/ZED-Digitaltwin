@@ -71,8 +71,8 @@
       "id": 0,
       "name": "origin",
       "anchor_mm": [
-        40.0,
-        60.0,
+        160.0,
+        120.0,
         0.0
       ],
       "anchor_corner": "top_right",
@@ -82,8 +82,8 @@
       "id": 1,
       "name": "x_axis",
       "anchor_mm": [
-        1360.0,
-        60.0,
+        1240.0,
+        120.0,
         0.0
       ],
       "anchor_corner": "top_right",
@@ -93,8 +93,8 @@
       "id": 2,
       "name": "y_axis",
       "anchor_mm": [
-        40.0,
-        715.0,
+        160.0,
+        595.0,
         0.0
       ],
       "anchor_corner": "top_right",
@@ -104,8 +104,8 @@
       "id": 3,
       "name": "xy_corner",
       "anchor_mm": [
-        1360.0,
-        715.0,
+        1240.0,
+        595.0,
         0.0
       ],
       "anchor_corner": "top_right",
@@ -116,7 +116,7 @@
       "name": "top_mid",
       "anchor_mm": [
         680.0,
-        60.0,
+        120.0,
         0.0
       ],
       "anchor_corner": "top_right",
@@ -127,7 +127,7 @@
       "name": "bottom_mid",
       "anchor_mm": [
         680.0,
-        715.0,
+        595.0,
         0.0
       ],
       "anchor_corner": "top_right",
@@ -137,7 +137,7 @@
       "id": 6,
       "name": "left_mid",
       "anchor_mm": [
-        40.0,
+        160.0,
         340.0,
         0.0
       ],
@@ -148,7 +148,7 @@
       "id": 7,
       "name": "right_mid",
       "anchor_mm": [
-        1360.0,
+        1240.0,
         340.0,
         0.0
       ],

@@ -410,22 +410,32 @@ def make_ground(args):
     width_mm = x_slices[-1]
     height_mm = y_slices[-1]
     
-    # 内缩边界物理坐标
-    inner_x_min = x_slices[1]
-    inner_x_max = x_slices[-2]
-    inner_y_min = y_slices[1]
-    inner_y_max = y_slices[-2]
+    # === 修改核心：判断如果是桌面级系统，则向内部移动两个格子 ===
+    if args.system_name.lower() == "desktop":
+        # 确保网格大小足够容纳两圈的内缩
+        if cols < 5 or rows < 5:
+            raise ValueError("Grid shape is too small for a 2-cell inward offset desktop layout.")
+        
+        print(f"[{args.system_name.upper()}] Applying 2-cell inward offset for calibration markers.")
+        inner_x_min = x_slices[4]
+        inner_x_max = x_slices[-5]
+        inner_y_min = y_slices[2]
+        inner_y_max = y_slices[-4]
+    else:
+        # 其它系统（如 ground）保持原有的内缩 1 个格子
+        inner_x_min = x_slices[1]
+        inner_x_max = x_slices[-2]
+        inner_y_min = y_slices[1]
+        inner_y_max = y_slices[-2]
 
     if inner_x_max <= inner_x_min or inner_y_max <= inner_y_min:
-        raise ValueError("Grid shape is too small to complete 1-cell inward offset calibration layout.")
+        raise ValueError("Grid shape is too small to complete calibration layout calculation.")
 
     mid_col_idx = cols // 2
     mid_row_idx = rows // 2
     grid_mid_x = x_slices[mid_col_idx]
     grid_mid_y = y_slices[mid_row_idx]
 
-    # 修改点：由于原点变为左上角，物理坐标系的 Y 映射概念发生了变化：
-    # inner_y_min 代表物理顶部的内缩线 (贴近左上角)，inner_y_max 代表物理底部的内缩线
     placements = [
         {"id": args.start_id + 0, "name": "origin", "anchor_mm": [inner_x_min, inner_y_min, 0.0], "anchor_corner": args.anchor_corner, "yaw_deg": 0.0},
         {"id": args.start_id + 1, "name": "x_axis", "anchor_mm": [inner_x_max, inner_y_min, 0.0], "anchor_corner": args.anchor_corner, "yaw_deg": 0.0},
