@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>二维社交热力图（实时）</title>
+  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+  <style>
+    body { margin:0; font-family:"Segoe UI","Microsoft YaHei",sans-serif; background:#1a1a2e; color:#eee; }
+    header { padding:16px 24px; background:#16213e; border-bottom:1px solid #0f3460; }
+    h1 { margin:0 0 6px; font-size:1.25rem; }
+    p { margin:0; color:#94a3b8; font-size:0.85rem; }
+    .meta { margin-top:8px; display:flex; gap:20px; flex-wrap:wrap; font-size:0.8rem; color:#cbd5e1; }
+    .live { color:#4ade80; }
+    .err { color:#f87171; }
+    #chart { width:100%; height:calc(100vh - 120px); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>二维社交热力图（仅热力 · 实时）</h1>
+    <p id="subtitle">连接中…</p>
+    <div class="meta" id="meta"></div>
+  </header>
+  <div id="chart"></div>
+  <script>
+    const API = "/api/live/heatmap2d";
+    const REFRESH_MS = 1500;
+    let lastMtime = null, chartReady = false;
+
+    function jet(t) {
+      t = Math.max(0, Math.min(1, t));
+      return [
+        Math.round(Math.max(0, Math.min(1, 1.5 - Math.abs(4*t-3))) * 255),
+        Math.round(Math.max(0, Math.min(1, 1.5 - Math.abs(4*t-2))) * 255),
+        Math.round(Math.max(0, Math.min(1, 1.5 - Math.abs(4*t-1))) * 255),
+      ];
+    }
+    const colorscale = Array.from({length:21}, (_, i) => {
+      const t = i/20; const [r,g,b] = jet(t); return [t, `rgb(${r},${g},${b})`];
+    });
+
+    function render(d) {
+      const w = d.width_m ?? 4, h = d.height_m ?? 2.4;
+      const nx = d.nx ?? d.values[0].length, ny = d.ny ?? d.values.length;
+      const cell = d.cell_x_m ?? 0.4;
+      const vmax = (d.intensity_range?.max ?? 1) || 1;
+      const x = Array.from({length:nx}, (_, i) => +((i+0.5)*cell).toFixed(3));
+      const y = Array.from({length:ny}, (_, i) => +((i+0.5)*cell).toFixed(3));
+      const trace = {
+        type:"heatmap", z:d.values, x, y, colorscale, zmin:0, zmax:vmax,
+        colorbar:{title:"社交强度", titleside:"right"},
+        hovertemplate:"X=%{x}m<br>Y=%{y}m<br>强度=%{z:.4f}<extra></extra>",
+      };
+      const layout = {
+        paper_bgcolor:"#1a1a2e", plot_bgcolor:"#0f172a", font:{color:"#e2e8f0"},
+        margin:{l:60,r:40,t:20,b:60},
+        xaxis:{title:`X / 宽度 (m) — ${w}m`, scaleanchor:"y", scaleratio:1},
+        yaxis:{title:`Y / 深度 (m) — ${h}m`},
+      };
+      if (!chartReady) { Plotly.newPlot("chart", [trace], layout, {responsive:true}); chartReady = true; }
+      else { Plotly.react("chart", [trace], layout); }
+      const svi = d.social_vitality?.index;
+      const ts = d.source_ground_top_mtime ? new Date(d.source_ground_top_mtime * 1000).toLocaleTimeString() : new Date().toLocaleTimeString();
+      document.getElementById("subtitle").innerHTML =
+        `<span class="live">● 自动刷新</span> ${d.scene_id||""} · ${w}m×${h}m · 观测更新 ${ts}`;
+      document.getElementById("meta").innerHTML = [
+        `<span>观测源: <b>${(d.source_ground_top||"").split(/[/\\\\]/).pop()}</b></span>`,
+        `<span>网格: <b>${nx}×${ny}</b> · 400mm/格</span>`,
+        d.observation_count != null ? `<span>观测点: <b>${d.observation_count}</b></span>` : "",
+        d.entity_cell_count != null ? `<span>实体留白: <b>${d.entity_cell_count}</b> 格</span>` : "",
+        svi != null ? `<span>SVI: <b>${svi.toFixed(3)}</b></span>` : "",
+        `<span>强度: <b>${(d.intensity_range?.min??0).toFixed(3)} ~ ${vmax.toFixed(3)}</b></span>`,
+      ].filter(Boolean).join("");
+    }
+
+    async function tick() {
+      try {
+        const resp = await fetch(API + "?t=" + Date.now());
+        if (!resp.ok) { const err = await resp.json().catch(() => ({})); throw new Error(err.error || resp.statusText); }
+        const d = await resp.json();
+        const changed = d.source_3d_mtime !== lastMtime;
+        if (changed) lastMtime = d.source_3d_mtime;
+        if (changed || !chartReady) render(d);
+      } catch (e) {
+        document.getElementById("subtitle").innerHTML =
+          `<span class="err">等待 3D 输入…</span> ${e.message} · <span class="live">自动重试中</span>`;
+      }
+    }
+    tick(); setInterval(tick, REFRESH_MS);
+  </script>
+</body>
+</html>

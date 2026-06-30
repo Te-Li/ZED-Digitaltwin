@@ -1,0 +1,37 @@
+[
+  {
+    "要素": "餐厅",
+    "英文": "restaurant",
+    "id_range": [10, 29],
+    "quantity": 20,
+    "attraction": 0.8
+  },
+  {
+    "要素": "酒吧",
+    "英文": "bar",
+    "id_range": [30, 49],
+    "quantity": 20,
+    "attraction": 0.6
+  },
+  {
+    "要素": "饮品",
+    "英文": "beverage_shop",
+    "id_range": [50, 59],
+    "quantity": 10,
+    "attraction": 0.5
+  },
+  {
+    "要素": "商店",
+    "英文": "shop",
+    "id_range": [60, 79],
+    "quantity": 20,
+    "attraction": 0.35
+  },
+  {
+    "要素": "办公",
+    "英文": "office",
+    "id_range": [80, 89],
+    "quantity": 10,
+    "attraction": 0.1
+  }
+]

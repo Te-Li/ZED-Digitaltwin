@@ -102,7 +102,7 @@ def run_pipeline():
             layout_data = fetch_current_layout(LAYOUT_API_URL)
             
             if layout_data is None or not isinstance(layout_data, dict):
-                print("  ⏭️ 条件未满足（未选择布局或返回非字典格式），优雅熔断本轮后续计算。")
+                print("  ⏭️ 条件未满足（未选择布局或返回非字典格式），熔断本轮后续计算。")
                 time.sleep(0.5)
                 continue
 
@@ -115,26 +115,31 @@ def run_pipeline():
             save_and_upload_layout(layout_data, occupied_cells, OCCUPIED_SPACE_JSON, LAYOUT_API_URL)
 
             # ----------------------------------------------------------------
-            # 步骤 3: 调用 entity_to_heatmap.py 生成热力图并自动上传
+            # 步骤 3: 调用 entity_to_heatmap.py 生成热力图（包含3D与新版2D）并自动上传
             # ----------------------------------------------------------------
-            print("[Step 3/3] 🔥 正在生成热力图、计算 SVI 并自动推送至服务器...")
+            print("[Step 3/3] 🔥 正在生成3D/2D热力图、计算 SVI 并自动推送至服务器...")
             if not HEATMAP_SCRIPT.exists():
                 print(f"  ❌ 错误: 未找到热力图生成脚本: {HEATMAP_SCRIPT}")
             else:
                 script_cwd = HEATMAP_SCRIPT.parent
 
+                # ✨ 核心修改：显式将本地的 LIVE_JSON 转为绝对路径，通过 --ground-top 传给子脚本
+                # 确保子脚本在切换工作目录（cwd）后，依然能正确读取到根目录的 2D 观测输入
                 cmd = [
                     "python", HEATMAP_SCRIPT.name,
                     "--input", str(Path(OCCUPIED_SPACE_JSON).resolve()),
                     "--elements-csv", str(Path(CSV_FILE).resolve()),
-                    "--output", str(Path(HEATMAP_OUTPUT).resolve())
+                    "--output", str(Path(HEATMAP_OUTPUT).resolve()),
+                    "--ground-top", str(Path(LIVE_JSON).resolve())  # 🌟 新增这一行
                 ]
                 
                 # 执行子进程
                 result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=script_cwd)
                 
                 if result.returncode == 0:
-                    print(f"  ✨ 本轮流水线处理全链路成功！最终热力生成并上传完毕。")
+                    print(f"  ✨ 本轮流水线处理全链路成功！最终3D与2D热力生成并上传完毕。")
+                    # 如果需要调试，可以取消下面这行的注释来查看 entity_to_heatmap.py 的详细打印（包含 SVI、有效网格等信息）
+                    # print(result.stdout)
                 else:
                     print(f"  ⚠️ 警告: 步骤 3 热力图生成或上传失败。")
                     print(f"  错误详情: {result.stderr.strip()}")

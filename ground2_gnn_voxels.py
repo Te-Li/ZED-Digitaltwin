@@ -54,6 +54,9 @@ def fetch_current_layout(api_url):
         print(f"❌ 获取布局失败 (GET): {e}")
         return None
 
+import json
+import numpy as np
+
 def calculate_occupied_cells(model_plane_path, id_to_element):
     """
     🛠️ 修正：直接读取本地上一步生成的 model_plane.json 
@@ -111,6 +114,7 @@ def calculate_occupied_cells(model_plane_path, id_to_element):
         if elem_type_zh == "桌椅单元":
             sz = int(round(coord[2]))
 
+        # 1. 基础包围盒网格计算
         for l in range(L):
             for w in range(W):
                 for h in range(H):
@@ -127,6 +131,7 @@ def calculate_occupied_cells(model_plane_path, id_to_element):
                     if cell_entry not in cells:
                         cells.append(cell_entry)
                         
+        # 2. 特殊模型处理：树干（生成树冠）
         if elem_type_zh == "树干":
             cx = sx + (L - 1) / 2.0 * v_L[0] + (W - 1) / 2.0 * v_W[0]
             cy = sy + (L - 1) / 2.0 * v_L[1] + (W - 1) / 2.0 * v_W[1]
@@ -150,6 +155,31 @@ def calculate_occupied_cells(model_plane_path, id_to_element):
                             }
                             if cell_entry not in cells:
                                 cells.append(cell_entry)                    
+
+        # 🔥 3. 特殊模型处理：雨篷（额外增加相对范围网格）
+        if elem_type_zh == "雨篷":
+            # 设定固定的高度 z = 5
+            # 注意：如果你的 5 高度也是相对高度，可以改为 sz + 5
+            fixed_z = 5 
+            
+            # x 相对范围 -4 到 4 (即 range(-4, 5))
+            # y 相对范围 1 到 9 (即 range(1, 10))
+            for rx in range(-4, 5):
+                for ry in range(1, 10):
+                    # 通过局部坐标转换，保证雨篷旋转时网格同步旋转
+                    # 假设 x 对应 v_L 方向，y 对应 v_W 方向
+                    target_pos = np.array([sx, sy, fixed_z]) + rx * v_L + ry * v_W
+                    x, y, z = int(target_pos[0]), int(target_pos[1]), int(target_pos[2])
+                    
+                    cell_entry = {
+                        "x": x,
+                        "y": y,
+                        "z": z,
+                        "type": elem_type_en
+                    }
+                    if cell_entry not in cells:
+                        cells.append(cell_entry)
+
     return cells
 
 def save_and_upload_layout(original_layout, cells, local_path, api_url):

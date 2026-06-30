@@ -4,7 +4,8 @@ from pathlib import Path
 
 # 配置路径
 OBS_FILE = Path("outputs/desktop_top_observations_live.json")
-CSV_FILE = Path("shop elements.csv")
+# 1. 对应改动：将 CSV 文件路径改为你的新 JSON 规则文件路径
+JSON_RULES_FILE = Path("shop_elements.json") 
 API_BASE_URL = "http://127.0.0.1:8000/api/simulation/layout/non-public"
 
 def is_file_ready_and_complete(filepath):
@@ -18,7 +19,7 @@ def is_file_ready_and_complete(filepath):
     if not path.exists() or path.stat().st_size == 0:
         return False
     try:
-        # 尝试以追加模式打开（部分系统可能无效，但作为基础防线）
+        # 尝试以追加模式打开
         with open(path, 'a'):
             pass
         # 尝试读取尾部字符，确保 JSON 闭合
@@ -35,7 +36,6 @@ def run_desktop_pipeline():
     # 确保输出目录存在
     OBS_FILE.parent.mkdir(parents=True, exist_ok=True)
     
-    # 1. 修正导入的函数名
     try:
         from desktop_1_update_json import update_urban_layout_via_api
     except ImportError as e:
@@ -64,10 +64,10 @@ def run_desktop_pipeline():
         try:
             print(f"\n--- 侦测到新观测数据，开始更新城市布局网格 ---")
             
-            # 2. 修正调用的函数名和传入的参数
+            # 2. 对应改动：修正调用的入参名，将 csv_path 改为 json_rules_path
             update_urban_layout_via_api(
                 observations_path=str(OBS_FILE),
-                csv_path=str(CSV_FILE),
+                json_rules_path=str(JSON_RULES_FILE),
                 base_url=API_BASE_URL
             )
             

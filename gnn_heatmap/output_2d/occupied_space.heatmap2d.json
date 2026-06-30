@@ -1,0 +1,119 @@
+{
+  "format": "affordancenet-heatmap-2d",
+  "version": 1,
+  "source_format": "affordancenet-heatmap-pack",
+  "source_file": "occupied_space.json",
+  "scene_id": "occupied_space",
+  "region_label": "occupied_space",
+  "heatmap_method": "synthetic_skeleton_gaussian_diffusion",
+  "projection": "max_z",
+  "width_m": 4.0,
+  "height_m": 2.4000000000000004,
+  "nx": 10,
+  "ny": 6,
+  "cell_x_m": 0.4,
+  "cell_y_m": 0.4,
+  "axis": {
+    "x": "width_m",
+    "y": "height_m",
+    "origin": "bottom_left"
+  },
+  "entity_mask_applied": true,
+  "entity_cell_count": 23,
+  "intensity_range": {
+    "min": 0.018458344543052233,
+    "max": 0.8290289107327511
+  },
+  "values": [
+    [
+      0.22634258266534651,
+      0.3179327113540782,
+      0.376094998364502,
+      0.4193995587475096,
+      0.43722729318533526,
+      0.4002401607728329,
+      0.3016278234002736,
+      0.1721008900538574,
+      0.06929674834401169,
+      0.018458344543052233
+    ],
+    [
+      0.4368899955347371,
+      null,
+      null,
+      null,
+      0.7143796594184234,
+      0.6394538232191946,
+      0.4825651609170917,
+      0.28095898696035565,
+      0.11586770971907814,
+      0.03156313075680833
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      0.7685663534907499,
+      0.5728200927155428,
+      0.3370604498143689,
+      0.14154569313155776,
+      0.03909316945437069
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      0.5732314511502106,
+      0.3370574996942599,
+      0.142911177839927,
+      0.04026699899999901
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      0.5640168155151313,
+      0.3360563031552091,
+      0.14849508475607492,
+      0.04481616772077832
+    ],
+    [
+      0.420159337047387,
+      null,
+      null,
+      null,
+      0.8290289107327511,
+      0.716151500311098,
+      0.5408560957131695,
+      0.34285399077821116,
+      0.16493121102685473,
+      0.055074534300376496
+    ]
+  ],
+  "social_vitality": {
+    "index": 0.41127386591788273,
+    "level_cn": "中等",
+    "mean_intensity": 0.24025967931573078,
+    "hotspot_mean": 0.6677951458211107,
+    "hotspot_fraction": 0.2,
+    "coverage": 0.6477272727272727,
+    "coverage_threshold": 0.05,
+    "max_intensity": 1.0,
+    "voxel_count": 528,
+    "heated_voxel_count": 342,
+    "formula": "SVI = 0.60×区域均值 + 0.40×热点Top20%均值 (覆盖率统计阈值>0.05)",
+    "formula_general": "SVI = 0.60·Ī + 0.40·H̄<br>Ī = (1/N) Σ Iᵢ &nbsp;&nbsp;（active_zone 内全部 N 个体素强度算术平均）<br>H̄ = mean(Top20% Iᵢ) &nbsp;&nbsp;（强度最高 20% 体素均值）<br>Iᵢ ∈ [0,1] 为 active_zone 内第 i 个行为空间体素预测强度，N 为体素总数",
+    "formula_computed": "SVI = 0.60×0.2403 + 0.40×0.6678 = 0.4113<br>Ī=0.2403, H̄(Top20%)=0.6678, N=528, 覆盖(>0.05)=64.8%"
+  },
+  "generated_at": "2026-06-30T02:49:33.347488+00:00",
+  "source_3d": "D:\\研一下\\Digital Future工作营\\gnn3d+2d\\output\\occupied_space.heatmap.json",
+  "source_3d_mtime": 1782559134.0
+}

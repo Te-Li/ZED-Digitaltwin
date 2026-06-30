@@ -1,6 +1,6 @@
-﻿要素,英文,id_range,quantity
-餐厅,restaurant,"[10,29]",20
-酒吧,bar,"[30,49]",20
-饮品,beverage_shop,"[50,59]",10
-商店,shop,"[60,79]",20
-办公,office,"[80,89]",10
+﻿要素,英文,id_range,quantity,attraction
+餐厅,restaurant,"[10,29]",20,0.8
+酒吧,bar,"[30,49]",20,0.6
+饮品,beverage_shop,"[50,59]",10,0.5
+商店,shop,"[60,79]",20,0.35
+办公,office,"[80,89]",10,0.1
