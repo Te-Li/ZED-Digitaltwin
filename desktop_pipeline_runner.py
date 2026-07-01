@@ -4,8 +4,7 @@ from pathlib import Path
 
 # 配置路径
 OBS_FILE = Path("outputs/desktop_top_observations_live.json")
-# 1. 对应改动：将 CSV 文件路径改为你的新 JSON 规则文件路径
-JSON_RULES_FILE = Path("shop_elements.json") 
+# 【修改点 1】移除了原先的 JSON_RULES_FILE 本地路径变量
 API_BASE_URL = "http://127.0.0.1:8000/api/simulation/layout/non-public"
 
 def is_file_ready_and_complete(filepath):
@@ -64,10 +63,9 @@ def run_desktop_pipeline():
         try:
             print(f"\n--- 侦测到新观测数据，开始更新城市布局网格 ---")
             
-            # 2. 对应改动：修正调用的入参名，将 csv_path 改为 json_rules_path
+            # 【修改点 2】修正调用的入参，完全去掉了 json_rules_path 传参
             update_urban_layout_via_api(
                 observations_path=str(OBS_FILE),
-                json_rules_path=str(JSON_RULES_FILE),
                 base_url=API_BASE_URL
             )
             

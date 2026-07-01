@@ -164,8 +164,8 @@ def calculate_occupied_cells(model_plane_path, id_to_element):
             
             # x 相对范围 -4 到 4 (即 range(-4, 5))
             # y 相对范围 1 到 9 (即 range(1, 10))
-            for rx in range(-4, 5):
-                for ry in range(1, 10):
+            for rx in range(-3, 4):
+                for ry in range(1, 8):
                     # 通过局部坐标转换，保证雨篷旋转时网格同步旋转
                     # 假设 x 对应 v_L 方向，y 对应 v_W 方向
                     target_pos = np.array([sx, sy, fixed_z]) + rx * v_L + ry * v_W
@@ -179,7 +179,24 @@ def calculate_occupied_cells(model_plane_path, id_to_element):
                     }
                     if cell_entry not in cells:
                         cells.append(cell_entry)
-
+                        
+        # 🔥 4. 特殊模型处理：路灯（额外增加高度6，x=0, y在 -5 到 0 之间的网格）
+        if elem_type_zh == "路灯":
+            fixed_z = 6
+            # y 在 -5 到 0 的区间，对应 range(-5, 1)
+            for ry in range(-5, 1):
+                # x为0，因此局部坐标 rx=0，省略了 0 * v_L
+                target_pos = np.array([sx, sy, fixed_z]) + ry * v_W
+                x, y, z = int(target_pos[0]), int(target_pos[1]), int(target_pos[2])
+                
+                cell_entry = {
+                    "x": x,
+                    "y": y,
+                    "z": z,
+                    "type": elem_type_en
+                }
+                if cell_entry not in cells:
+                    cells.append(cell_entry)
     return cells
 
 def save_and_upload_layout(original_layout, cells, local_path, api_url):
