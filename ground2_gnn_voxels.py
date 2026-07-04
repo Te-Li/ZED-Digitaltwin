@@ -113,6 +113,7 @@ def calculate_occupied_cells(model_plane_path, id_to_element):
         
         if elem_type_zh == "桌椅单元":
             sz = int(round(coord[2]))
+            print(f"🪑 桌椅单元高度调整为 sz={sz}，原始坐标 z={coord[2]}")
 
         # 1. 基础包围盒网格计算
         for l in range(L):

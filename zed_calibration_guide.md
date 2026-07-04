@@ -37,7 +37,7 @@ python zed_intrinsic_calibration.py capture --output-dir calibration/images3 --c
 根据采集图片计算左目 OpenCV 内参。
 
 ```powershell
-python zed_intrinsic_calibration.py calibrate --image-dir calibration/images1 --output calibration/zeda_left_intrinsics.json
+python zed_intrinsic_calibration.py calibrate --image-dir calibration/images3 --output calibration/zedc_left_intrinsics.json
 ```
 ### 标定质量评估
 

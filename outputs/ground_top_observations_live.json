@@ -1,0 +1,14 @@
+[
+  {
+    "id": 49,
+    "center_x_mm": 932.93305462494,
+    "center_y_mm": 599.1660782605896,
+    "center_z_mm": 901.6931881067758,
+    "row": 1,
+    "col": 2,
+    "level": 2,
+    "orientation": "1,0",
+    "source": "cam_a",
+    "serial_number": 34407890
+  }
+]

@@ -69,6 +69,9 @@ python aruco_grid_twin.py --system-name desktop solve-extrinsic --image captures
 
 地面 1:1 版本：
 ```powershell
+
+python aruco_grid_twin.py --system-name ground solve-extrinsic --image captures/ground_cam_a_ground.png --intrinsics calibration/zeda_left_intrinsics.json --ground-config markers/ground/config_markers.json --camera-name cam_a --output calibration/ground_cam_a_extrinsic.json
+
 python aruco_grid_twin.py --system-name ground solve-extrinsic --image captures/ground_cam_b_ground.png --intrinsics calibration/zedb_left_intrinsics.json --ground-config markers/ground/config_markers.json --camera-name cam_b --output calibration/ground_cam_b_extrinsic.json
 ```
 

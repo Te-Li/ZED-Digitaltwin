@@ -47,18 +47,38 @@ def process_street_elements(csv_path, json_path, output_path, api_url=None):
             if current_id in filtered_json_map:
                 print(filtered_json_map)
                 json_item = filtered_json_map[current_id]
-                height_matches = (elem['高度'] == json_item['level'])
+                height_matches = (elem['高度'] == json_item['level'])or(json_item['level'] >=0)
                 
                 #print(current_id)
-                if is_desk_chair or height_matches:
-                    matched_records[current_id] = {
-                        'row': json_item['row'],
-                        'col': json_item['col'],
-                        'level': json_item['level'],
-                        'orientation': json_item['orientation'].replace(" ", ""),
-                        'length': elem['长度'],
-                        'width': elem['宽度']
-                    }
+                if is_desk_chair:
+                    if json_item['level']>0:
+                        matched_records[current_id] = {
+                            'row': json_item['row'],
+                            'col': json_item['col'],
+                            'level': json_item['level']-1,
+                            'orientation': json_item['orientation'].replace(" ", ""),
+                            'length': elem['长度'],
+                            'width': elem['宽度']
+                        }
+                    else:
+                        matched_records[current_id] = {
+                            'row': json_item['row'],
+                            'col': json_item['col'],
+                            'level': 0,
+                            'orientation': json_item['orientation'].replace(" ", ""),
+                            'length': elem['长度'],
+                            'width': elem['宽度']
+                        }
+                else:
+                    if height_matches:
+                        matched_records[current_id] = {
+                            'row': json_item['row'],
+                            'col': json_item['col'],
+                            'level': json_item['level'],
+                            'orientation': json_item['orientation'].replace(" ", ""),
+                            'length': elem['长度'],
+                            'width': elem['宽度']
+                        }
 
     # --- 逐层向下补齐所有缺失的 level ---
     if desk_chair_range:
@@ -86,6 +106,7 @@ def process_street_elements(csv_path, json_path, output_path, api_url=None):
                         'length': upper_rec['length'],
                         'width': upper_rec['width']
                     }
+                    print(f"✅ 补齐桌椅: 原ID {upper_id} 的 level {target_level} 已分配给空闲桌椅 ID {fallback_id}")
                 else:
                     print(f"警告: 试图为桌椅 (原ID: {upper_id}) 补齐 level: {target_level}，但空闲桌椅 ID 已用尽！")
 
@@ -145,7 +166,7 @@ def process_street_elements(csv_path, json_path, output_path, api_url=None):
             # 检查响应状态码
             if response.status_code in [200, 201]:
                 print("成功！数据已成功 POST 到服务器。")
-                print("服务器返回:", response.text)
+                #print("服务器返回:", response.text)
             else:
                 print(f"失败！服务器返回状态码: {response.status_code}")
                 print("错误信息:", response.text)

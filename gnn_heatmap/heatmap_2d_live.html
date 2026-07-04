@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>二维社交热力图（实时）</title>
+  <title>Masked 2D Heatmap Live</title>
   <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
   <style>
     body { margin:0; font-family:"Segoe UI","Microsoft YaHei",sans-serif; background:#1a1a2e; color:#eee; }
@@ -18,8 +18,8 @@
 </head>
 <body>
   <header>
-    <h1>二维社交热力图（仅热力 · 实时）</h1>
-    <p id="subtitle">连接中…</p>
+    <h1>Masked 2D Heatmap</h1>
+    <p id="subtitle">Connecting...</p>
     <div class="meta" id="meta"></div>
   </header>
   <div id="chart"></div>
@@ -40,6 +40,16 @@
       const t = i/20; const [r,g,b] = jet(t); return [t, `rgb(${r},${g},${b})`];
     });
 
+    function displayTime(value) {
+      if (!value) return new Date().toLocaleTimeString();
+      const date = typeof value === "number" ? new Date(value * 1000) : new Date(value);
+      return date.toLocaleTimeString();
+    }
+
+    function basename(path) {
+      return (path || "").split(/[/\\]/).pop();
+    }
+
     function render(d) {
       const w = d.width_m ?? 4, h = d.height_m ?? 2.4;
       const nx = d.nx ?? d.values[0].length, ny = d.ny ?? d.values.length;
@@ -49,42 +59,49 @@
       const y = Array.from({length:ny}, (_, i) => +((i+0.5)*cell).toFixed(3));
       const trace = {
         type:"heatmap", z:d.values, x, y, colorscale, zmin:0, zmax:vmax,
-        colorbar:{title:"社交强度", titleside:"right"},
-        hovertemplate:"X=%{x}m<br>Y=%{y}m<br>强度=%{z:.4f}<extra></extra>",
+        colorbar:{title:"Intensity", titleside:"right"},
+        hovertemplate:"X=%{x}m<br>Y=%{y}m<br>Intensity=%{z:.4f}<extra></extra>",
       };
       const layout = {
         paper_bgcolor:"#1a1a2e", plot_bgcolor:"#0f172a", font:{color:"#e2e8f0"},
         margin:{l:60,r:40,t:20,b:60},
-        xaxis:{title:`X / 宽度 (m) — ${w}m`, scaleanchor:"y", scaleratio:1},
-        yaxis:{title:`Y / 深度 (m) — ${h}m`},
+        xaxis:{title:`X / width (m) - ${w}m`, scaleanchor:"y", scaleratio:1},
+        yaxis:{title:`Y / depth (m) - ${h}m`},
       };
       if (!chartReady) { Plotly.newPlot("chart", [trace], layout, {responsive:true}); chartReady = true; }
       else { Plotly.react("chart", [trace], layout); }
+
       const svi = d.social_vitality?.index;
-      const ts = d.source_ground_top_mtime ? new Date(d.source_ground_top_mtime * 1000).toLocaleTimeString() : new Date().toLocaleTimeString();
+      const ts = displayTime(d.source_ground_top_mask_mtime || d.source_3d_mtime || d.generated_at);
       document.getElementById("subtitle").innerHTML =
-        `<span class="live">● 自动刷新</span> ${d.scene_id||""} · ${w}m×${h}m · 观测更新 ${ts}`;
+        `<span class="live">auto refresh</span> ${d.scene_id || ""} / ${w}m x ${h}m / updated ${ts}`;
       document.getElementById("meta").innerHTML = [
-        `<span>观测源: <b>${(d.source_ground_top||"").split(/[/\\\\]/).pop()}</b></span>`,
-        `<span>网格: <b>${nx}×${ny}</b> · 400mm/格</span>`,
-        d.observation_count != null ? `<span>观测点: <b>${d.observation_count}</b></span>` : "",
-        d.entity_cell_count != null ? `<span>实体留白: <b>${d.entity_cell_count}</b> 格</span>` : "",
+        `<span>3D: <b>${basename(d.source_3d)}</b></span>`,
+        `<span>mask: <b>${basename(d.source_ground_top_mask)}</b></span>`,
+        `<span>grid: <b>${nx}x${ny}</b> / 400mm</span>`,
+        d.ground_top_observation_count != null ? `<span>observations: <b>${d.ground_top_observation_count}</b></span>` : "",
+        d.ground_top_mask_cell_count != null ? `<span>masked: <b>${d.ground_top_mask_cell_count}</b></span>` : "",
+        d.entity_cell_count != null ? `<span>entity blank: <b>${d.entity_cell_count}</b></span>` : "",
         svi != null ? `<span>SVI: <b>${svi.toFixed(3)}</b></span>` : "",
-        `<span>强度: <b>${(d.intensity_range?.min??0).toFixed(3)} ~ ${vmax.toFixed(3)}</b></span>`,
+        `<span>intensity: <b>${(d.intensity_range?.min??0).toFixed(3)} ~ ${vmax.toFixed(3)}</b></span>`,
       ].filter(Boolean).join("");
     }
 
     async function tick() {
       try {
         const resp = await fetch(API + "?t=" + Date.now());
-        if (!resp.ok) { const err = await resp.json().catch(() => ({})); throw new Error(err.error || resp.statusText); }
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({}));
+          throw new Error(err.error || resp.statusText);
+        }
         const d = await resp.json();
-        const changed = d.source_3d_mtime !== lastMtime;
-        if (changed) lastMtime = d.source_3d_mtime;
+        const mtime = d.source_ground_top_mask_mtime || d.source_3d_mtime || d.generated_at;
+        const changed = mtime !== lastMtime;
+        if (changed) lastMtime = mtime;
         if (changed || !chartReady) render(d);
       } catch (e) {
         document.getElementById("subtitle").innerHTML =
-          `<span class="err">等待 3D 输入…</span> ${e.message} · <span class="live">自动重试中</span>`;
+          `<span class="err">waiting for inputs...</span> ${e.message} / <span class="live">retrying</span>`;
       }
     }
     tick(); setInterval(tick, REFRESH_MS);

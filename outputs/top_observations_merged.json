@@ -1,0 +1,12 @@
+[
+  {
+    "id": 22,
+    "center_x_mm": 109.56492376780704,
+    "center_y_mm": 43.761214655308834,
+    "center_z_mm": 3.303052884820829,
+    "row": 2,
+    "col": 5,
+    "level": 0,
+    "source": "D:\\desktop\\digitaltwin\\outputs\\cam_a_obs.json"
+  }
+]

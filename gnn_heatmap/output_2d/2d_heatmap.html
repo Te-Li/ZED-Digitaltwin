@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>二维社交热力图 — occupied_space</title>
+  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+  <style>
+    body { margin:0; font-family:"Segoe UI","Microsoft YaHei",sans-serif; background:#1a1a2e; color:#eee; }
+    header { padding:16px 24px; background:#16213e; border-bottom:1px solid #0f3460; }
+    h1 { margin:0 0 6px; font-size:1.25rem; }
+    p { margin:0; color:#94a3b8; font-size:0.85rem; }
+    .meta { margin-top:8px; display:flex; gap:20px; flex-wrap:wrap; font-size:0.8rem; color:#cbd5e1; }
+    #chart { width:100%; height:calc(100vh - 110px); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>二维社交热力图（仅热力 · 实体格留白）</h1>
+    <p id="subtitle"></p>
+    <div class="meta" id="meta"></div>
+  </header>
+  <div id="chart"></div>
+  <script>
+    const d = {"format": "affordancenet-heatmap-2d", "version": 1, "source_format": "affordancenet-heatmap-pack", "source_file": "occupied_space.json", "scene_id": "occupied_space", "region_label": "occupied_space", "heatmap_method": "synthetic_skeleton_gaussian_diffusion_ground_top_masked", "projection": "max_z", "width_m": 4.0, "height_m": 2.4000000000000004, "nx": 10, "ny": 6, "cell_x_m": 0.4, "cell_y_m": 0.4, "axis": {"x": "width_m", "y": "height_m", "origin": "bottom_left"}, "entity_mask_applied": true, "entity_cell_count": 0, "intensity_range": {"min": 0.031019747594864477, "max": 1.0}, "values": [[0.13818495630511662, 0.2926462122111238, 0.4738821561815004, 0.6197501368154699, 0.6745100897033914, 0.6099791598673284, 0.4456367850494437, 0.264371016788754, 0.1317924028162304, 0.05750521579280544], [0.21837955128401587, 0.44676046683494364, 0.6885943113268869, 0.8570363803357598, 0.9105265214371405, 0.836081718683392, 0.640586225122533, 0.4023924048628295, 0.21877058102147987, 0.10424161291243708], [0.27781802355673657, 0.5481434244732992, 0.8123615323648654, 0.9758359896332125, 0.0, 0.939333422328368, 0.7346474680154689, 0.4712497204927319, 0.26233665018614144, 0.1280987222948105], [0.3074410099091109, 0.5802769892789127, 0.8289546575679133, 0.9715543990690432, 1.0, 0.9147954812686515, 0.7056968149575944, 0.43987187754037727, 0.23200181222466104, 0.1077704111731383], [0.29504487529410717, 0.5348781228355786, 0.7374315884343805, 0.8436370948643429, 0.8565494474485098, 0.77409903288312, 0.582813891652384, 0.3433274375134957, 0.1598674025599257, 0.06497190498920581], [0.22975265668094028, 0.4055714250596707, 0.5432168394527659, 0.6039763867130947, 0.6027874849719358, 0.5433103326554545, 0.40705973134023116, 0.23098866084725608, 0.09614286128239762, 0.031019747594864477]], "social_vitality": {"index": 0.3835007098903775, "level_cn": "较低", "mean_intensity": 0.21791018820191113, "hotspot_mean": 0.631886492423077, "hotspot_fraction": 0.2, "coverage": 0.6341911764705882, "coverage_threshold": 0.05, "max_intensity": 1.0, "voxel_count": 544, "heated_voxel_count": 345, "formula": "SVI = 0.60×区域均值 + 0.40×热点Top20%均值 (覆盖率统计阈值>0.05)", "formula_general": "SVI = 0.60·Ī + 0.40·H̄<br>Ī = (1/N) Σ Iᵢ &nbsp;&nbsp;（active_zone 内全部 N 个体素强度算术平均）<br>H̄ = mean(Top20% Iᵢ) &nbsp;&nbsp;（强度最高 20% 体素均值）<br>Iᵢ ∈ [0,1] 为 active_zone 内第 i 个行为空间体素预测强度，N 为体素总数", "formula_computed": "SVI = 0.60×0.2179 + 0.40×0.6319 = 0.3835<br>Ī=0.2179, H̄(Top20%)=0.6319, N=544, 覆盖(>0.05)=63.4%"}, "generated_at": "2026-07-04T09:33:19.888871+00:00", "source_3d": "D:\\Users\\LT\\Desktop\\ZED-Digitaltwin\\gnn_heatmap\\output\\occupied_space.heatmap.json", "source_3d_mtime": 1783137253.0908265, "source_ground_top_mask": "D:\\Users\\LT\\Desktop\\ZED-Digitaltwin\\outputs\\ground_top_observations_live.json", "ground_top_mask_applied": true, "ground_top_mask_mode": "mask_observed_cells", "ground_top_observation_count": 0, "ground_top_observation_skipped": 0, "ground_top_mask_cell_count": 0, "source_ground_top_mask_mtime": 1783157599.0511532};
+    (function() {
+      function jet(t) {
+        t = Math.max(0, Math.min(1, t));
+        return [
+          Math.round(Math.max(0, Math.min(1, 1.5 - Math.abs(4*t-3))) * 255),
+          Math.round(Math.max(0, Math.min(1, 1.5 - Math.abs(4*t-2))) * 255),
+          Math.round(Math.max(0, Math.min(1, 1.5 - Math.abs(4*t-1))) * 255),
+        ];
+      }
+      const cs = Array.from({length:21}, (_, i) => {
+        const t = i/20; const [r,g,b] = jet(t); return [t, `rgb(${r},${g},${b})`];
+      });
+      const w = d.width_m ?? 4, h = d.height_m ?? 2.4;
+      const nx = d.nx ?? d.values[0].length, ny = d.ny ?? d.values.length;
+      const cell = d.cell_x_m ?? 0.4;
+      const vmax = (d.intensity_range?.max ?? 1) || 1;
+      const x = Array.from({length:nx}, (_, i) => +((i+0.5)*cell).toFixed(3));
+      const y = Array.from({length:ny}, (_, i) => +((i+0.5)*cell).toFixed(3));
+      document.getElementById("subtitle").textContent =
+        `${d.scene_id||""} · ${w}m × ${h}m · ${cell*1000}mm 格 · ${d.projection||"max_z"}`;
+      const svi = d.social_vitality?.index;
+      document.getElementById("meta").innerHTML = [
+        `<span>网格: <b>${nx}×${ny}</b></span>`,
+        d.entity_cell_count != null ? `<span>实体留白: <b>${d.entity_cell_count}</b> 格</span>` : "",
+        svi != null ? `<span>SVI: <b>${svi.toFixed(3)}</b></span>` : "",
+        `<span>强度: <b>${(d.intensity_range?.min??0).toFixed(3)} ~ ${vmax.toFixed(3)}</b></span>`,
+      ].filter(Boolean).join("");
+      Plotly.newPlot("chart", [{
+        type:"heatmap", z:d.values, x, y, colorscale:cs, zmin:0, zmax:vmax,
+        colorbar:{title:"社交强度", titleside:"right"},
+        hovertemplate:"X=%{x}m<br>Y=%{y}m<br>强度=%{z}<extra></extra>",
+      }], {
+        paper_bgcolor:"#1a1a2e", plot_bgcolor:"#0f172a", font:{color:"#e2e8f0"},
+        margin:{l:60,r:40,t:20,b:60},
+        xaxis:{title:`X / 宽度 (m) — ${w}m`, scaleanchor:"y", scaleratio:1},
+        yaxis:{title:`Y / 深度 (m) — ${h}m`},
+      }, {responsive:true});
+    })();
+  </script>
+</body>
+</html>

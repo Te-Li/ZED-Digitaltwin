@@ -1,32 +1,21 @@
-"""ground_top_observations_live.json → 二维热力网格。"""
+"""Apply ground-top observations as a mask on an existing 2D heatmap."""
 
 from __future__ import annotations
 
-import json
+from copy import deepcopy
 from datetime import datetime, timezone
+import json
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
-import numpy as np
-
-from services.heatmap_2d import (
-    PACK_FORMAT_2D,
-    PACK_VERSION,
-    Heatmap2DOptions,
-    VOXEL_MODULE_M,
-    _entity_footprint_mask,
-    _grid_to_json_list,
-    export_heatmap_2d_html,
-)
-
-GROUND_TOP_FORMAT = "ground-top-observations"
+from services.heatmap_2d import VOXEL_MODULE_M
 
 
 def load_ground_top_observations(path: Path) -> list[dict[str, Any]]:
     path = Path(path)
     raw = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(raw, list):
-        raise ValueError(f"{path.name} 应为观测数组 JSON")
+        raise ValueError(f"{path.name} must be an observation array JSON")
     return [item for item in raw if isinstance(item, dict)]
 
 
@@ -37,12 +26,14 @@ def _cell_from_observation(
     ny: int,
     cell_mm: float,
 ) -> tuple[int, int] | None:
-    """row/col 为 1-based 网格索引；若无则回退 mm 坐标。"""
+    """row/col are sensor indices; heatmap mask is shifted +1 cell in x/y."""
     row = obs.get("row")
     col = obs.get("col")
     if row is not None and col is not None:
-        iy = int(row) - 1
-        ix = int(col) - 1
+        # iy = int(row) + 1
+        # ix = int(col) + 1
+        iy = int(row)
+        ix = int(col)
     else:
         x_mm = float(obs.get("center_x_mm", 0))
         y_mm = float(obs.get("center_y_mm", 0))
@@ -53,26 +44,25 @@ def _cell_from_observation(
     return ix, iy
 
 
-def project_ground_top_observations_to_2d(
+def apply_ground_top_mask_to_2d(
+    heatmap_2d: dict[str, Any],
     observations: list[dict[str, Any]],
     *,
-    options: Optional[Heatmap2DOptions] = None,
-    entity_pack: Optional[dict[str, Any]] = None,
     source_file: str = "ground_top_observations_live.json",
 ) -> dict[str, Any]:
-    """观测点数组 → affordancenet-heatmap-2d 包。"""
-    options = options or Heatmap2DOptions()
-    nx, ny = options.nx, options.ny
-    cell_m = options.cell_m
+    """Mask observed ground-top cells in an existing 2D heatmap."""
+    result = deepcopy(heatmap_2d)
+    values = result.get("values")
+    if not isinstance(values, list) or not values:
+        raise ValueError("2D heatmap values must be a non-empty grid")
+
+    ny = int(result.get("ny") or len(values))
+    nx = int(result.get("nx") or len(values[0]))
+    cell_m = float(result.get("cell_x_m") or VOXEL_MODULE_M)
     cell_mm = cell_m * 1000.0
 
-    entity_mask = (
-        _entity_footprint_mask(entity_pack, nx, ny)
-        if options.mask_entity_cells and entity_pack
-        else np.zeros((ny, nx), dtype=bool)
-    )
 
-    grid = np.zeros((ny, nx), dtype=np.float64)
+    masked_cells: set[tuple[int, int]] = set()
     skipped = 0
     for obs in observations:
         cell = _cell_from_observation(obs, nx=nx, ny=ny, cell_mm=cell_mm)
@@ -80,93 +70,30 @@ def project_ground_top_observations_to_2d(
             skipped += 1
             continue
         ix, iy = cell
-        if entity_mask[iy, ix]:
-            continue
-        grid[iy, ix] += 1.0
+        values[iy][ix] = None
+        masked_cells.add((ix, iy))
 
-    peak = float(grid.max())
-    if peak > 0:
-        grid = grid / peak
+    active: list[float] = []
+    for row in values:
+        for value in row:
+            if value is None:
+                continue
+            v = float(value)
+            if v > 1e-6:
+                active.append(v)
 
-    if options.mask_entity_cells:
-        grid[entity_mask] = np.nan
 
-    active = grid[~entity_mask & ~np.isnan(grid) & (grid > 1e-6)]
-
-    return {
-        "format": PACK_FORMAT_2D,
-        "version": PACK_VERSION,
-        "source_format": GROUND_TOP_FORMAT,
-        "source_file": source_file,
-        "scene_id": Path(source_file).stem,
-        "region_label": "ground_top_observations",
-        "heatmap_method": "ground_top_observation_count",
-        "projection": "top_down_count",
-        "width_m": options.width_m,
-        "height_m": options.height_m,
-        "nx": nx,
-        "ny": ny,
-        "cell_x_m": cell_m,
-        "cell_y_m": cell_m,
-        "axis": {"x": "width_m", "y": "height_m", "origin": "bottom_left"},
-        "entity_mask_applied": options.mask_entity_cells and entity_pack is not None,
-        "entity_cell_count": int(entity_mask.sum()) if entity_pack else 0,
-        "observation_count": len(observations),
-        "observation_skipped": skipped,
-        "observation_cells": int(np.sum(grid > 1e-6) if not np.all(np.isnan(grid)) else 0),
-        "intensity_range": {
-            "min": float(active.min()) if active.size else 0.0,
-            "max": float(active.max()) if active.size else 0.0,
-        },
-        "values": _grid_to_json_list(grid),
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+    result["values"] = values
+    result["source_ground_top_mask"] = source_file
+    result["ground_top_mask_applied"] = True
+    result["ground_top_mask_mode"] = "mask_observed_cells"
+    result["ground_top_observation_count"] = len(observations)
+    result["ground_top_observation_skipped"] = skipped
+    result["ground_top_mask_cell_count"] = len(masked_cells)
+    result["heatmap_method"] = f"{result.get('heatmap_method', 'heatmap')}_ground_top_masked"
+    result["intensity_range"] = {
+        "min": min(active) if active else 0.0,
+        "max": max(active) if active else 0.0,
     }
-
-
-def export_ground_top_2d_json(
-    input_json: Path,
-    output_json: Path,
-    *,
-    options: Optional[Heatmap2DOptions] = None,
-    entity_pack_path: Optional[Path] = None,
-) -> dict[str, Any]:
-    input_json = Path(input_json)
-    output_json = Path(output_json)
-    observations = load_ground_top_observations(input_json)
-
-    entity_pack = None
-    if entity_pack_path and Path(entity_pack_path).is_file():
-        entity_pack = json.loads(Path(entity_pack_path).read_text(encoding="utf-8"))
-
-    result = project_ground_top_observations_to_2d(
-        observations,
-        options=options,
-        entity_pack=entity_pack,
-        source_file=input_json.name,
-    )
-    result["source_ground_top"] = str(input_json.resolve())
-    if input_json.exists():
-        result["source_ground_top_mtime"] = input_json.stat().st_mtime
-
-    output_json.parent.mkdir(parents=True, exist_ok=True)
-    output_json.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
+    result["generated_at"] = datetime.now(timezone.utc).isoformat()
     return result
-
-
-def export_ground_top_2d_bundle(
-    input_json: Path,
-    output_json: Path,
-    *,
-    output_html: Optional[Path] = None,
-    options: Optional[Heatmap2DOptions] = None,
-    entity_pack_path: Optional[Path] = None,
-) -> tuple[dict[str, Any], Path]:
-    result = export_ground_top_2d_json(
-        input_json,
-        output_json,
-        options=options,
-        entity_pack_path=entity_pack_path,
-    )
-    html_path = output_html or output_json.with_suffix(".html")
-    export_heatmap_2d_html(result, html_path)
-    return result, html_path

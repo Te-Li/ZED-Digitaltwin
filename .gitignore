@@ -3,9 +3,6 @@ __pycache__/
 
 .vscode/
 
-calibration/
-captures/
-outputs/
 archive/
 
 *.pdf

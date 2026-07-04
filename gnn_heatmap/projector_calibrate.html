@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>投影四点标定</title>
+  <style>
+    html, body { width:100%; height:100%; margin:0; overflow:hidden; background:#000; }
+    body { font-family:"Segoe UI","Microsoft YaHei",sans-serif; color:#fff; cursor:crosshair; }
+    canvas { position:fixed; inset:0; width:100vw; height:100vh; }
+    .hud {
+      position:fixed; left:20px; top:20px; z-index:2; display:flex; gap:10px; align-items:center;
+      padding:10px 12px; background:rgba(0,0,0,.68); border:1px solid rgba(255,255,255,.18);
+      font-size:14px; pointer-events:auto;
+    }
+    .status { min-width:260px; color:#e5e7eb; }
+    button {
+      border:1px solid rgba(255,255,255,.32); background:#111827; color:#fff;
+      height:32px; padding:0 12px; font:inherit; cursor:pointer;
+    }
+    button:disabled { opacity:.42; cursor:not-allowed; }
+    .ok { color:#86efac; }
+    .err { color:#fca5a5; }
+  </style>
+</head>
+<body>
+  <canvas id="stage"></canvas>
+  <div class="hud">
+    <div class="status" id="status"></div>
+    <button id="saveBtn" disabled>保存</button>
+    <button id="resetBtn">重选</button>
+    <button id="liveBtn">投影页</button>
+  </div>
+  <script>
+    const API = "/api/live/projection-calibration";
+    const labels = ["左上", "右上", "右下", "左下"];
+    const canvas = document.getElementById("stage");
+    const ctx = canvas.getContext("2d");
+    const statusEl = document.getElementById("status");
+    const saveBtn = document.getElementById("saveBtn");
+    const resetBtn = document.getElementById("resetBtn");
+    const liveBtn = document.getElementById("liveBtn");
+    let points = [];
+    let msg = "";
+
+    function resize() {
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.round(innerWidth * dpr);
+      canvas.height = Math.round(innerHeight * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      draw();
+    }
+
+    function setStatus(text, cls) {
+      statusEl.className = "status" + (cls ? " " + cls : "");
+      statusEl.textContent = text;
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, innerWidth, innerHeight);
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, innerWidth, innerHeight);
+
+      ctx.strokeStyle = "rgba(255,255,255,.16)";
+      ctx.lineWidth = 1;
+      for (let x = 0; x <= innerWidth; x += 80) {
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, innerHeight); ctx.stroke();
+      }
+      for (let y = 0; y <= innerHeight; y += 80) {
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(innerWidth, y); ctx.stroke();
+      }
+
+      if (points.length > 0) {
+        ctx.strokeStyle = "#38bdf8";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(points[0][0], points[0][1]);
+        for (let i = 1; i < points.length; i++) ctx.lineTo(points[i][0], points[i][1]);
+        if (points.length === 4) ctx.closePath();
+        ctx.stroke();
+      }
+
+      points.forEach((p, i) => {
+        ctx.fillStyle = "#facc15";
+        ctx.beginPath(); ctx.arc(p[0], p[1], 7, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = "#fff";
+        ctx.font = "14px Segoe UI, Microsoft YaHei, sans-serif";
+        ctx.fillText(`${i + 1} ${labels[i]}`, p[0] + 12, p[1] - 12);
+      });
+
+      if (points.length < 4) {
+        setStatus(`请点击投影画布实际${labels[points.length]}角（第 ${points.length + 1} 点）`);
+      } else if (!msg) {
+        setStatus("投影画布四角已选择，可保存标定", "ok");
+      }
+      saveBtn.disabled = points.length !== 4;
+    }
+
+    canvas.addEventListener("click", (event) => {
+      if (event.target !== canvas || points.length >= 4) return;
+      points.push([Math.round(event.clientX), Math.round(event.clientY)]);
+      msg = "";
+      draw();
+    });
+
+    resetBtn.addEventListener("click", () => {
+      points = [];
+      msg = "";
+      draw();
+    });
+
+    saveBtn.addEventListener("click", async () => {
+      if (points.length !== 4) return;
+      const payload = {
+        enabled: true,
+        viewport_width: innerWidth,
+        viewport_height: innerHeight,
+        device_pixel_ratio: window.devicePixelRatio || 1,
+        point_order: "top_left,top_right,bottom_right,bottom_left",
+        dst_points: points,
+        updated_at: new Date().toISOString(),
+      };
+      try {
+        const resp = await fetch(API, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(payload),
+        });
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({}));
+          throw new Error(err.error || resp.statusText);
+        }
+        msg = "saved";
+        setStatus("投影画布四角标定已保存", "ok");
+      } catch (err) {
+        msg = "error";
+        setStatus(`保存失败：${err.message}`, "err");
+      }
+    });
+
+    liveBtn.addEventListener("click", () => {
+      location.href = "/projector_live.html";
+    });
+
+    async function loadExisting() {
+      try {
+        const resp = await fetch(API + "?t=" + Date.now());
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (Array.isArray(data.dst_points) && data.dst_points.length === 4) {
+          const sx = innerWidth / (data.viewport_width || innerWidth);
+          const sy = innerHeight / (data.viewport_height || innerHeight);
+          points = data.dst_points.map(([x, y]) => [Math.round(x * sx), Math.round(y * sy)]);
+        }
+      } finally {
+        draw();
+      }
+    }
+
+    addEventListener("resize", resize);
+    resize();
+    loadExisting();
+  </script>
+</body>
+</html>

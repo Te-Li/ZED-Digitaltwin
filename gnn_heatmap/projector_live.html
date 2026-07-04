@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>投影热力图</title>
+  <style>
+    html, body { width:100%; height:100%; margin:0; overflow:hidden; background:#000; }
+    canvas { position:fixed; inset:0; width:100vw; height:100vh; background:#000; }
+    #debug { pointer-events:none; background:transparent; }
+    .hint {
+      position:fixed; left:16px; top:16px; z-index:2; color:#fca5a5;
+      font:14px "Segoe UI","Microsoft YaHei",sans-serif; background:rgba(0,0,0,.72);
+      padding:8px 10px; border:1px solid rgba(255,255,255,.16);
+    }
+    .hidden { display:none; }
+  </style>
+</head>
+<body>
+  <canvas id="screen"></canvas>
+  <canvas id="debug"></canvas>
+  <div class="hint hidden" id="hint"></div>
+  <script>
+    const HEATMAP_API = "/api/live/heatmap2d";
+    const CALIBRATION_API = "/api/live/projection-calibration";
+    const REFRESH_MS = 1000;
+    const canvas = document.getElementById("screen");
+    const debugCanvas = document.getElementById("debug");
+    const debugCtx = debugCanvas.getContext("2d");
+    const hint = document.getElementById("hint");
+    const gl = canvas.getContext("webgl", {alpha:false, antialias:false});
+    let program, texture, lastMtime = null, calibration = null, latestData = null;
+    let debugEnabled = false;
+
+    function showHint(text) {
+      hint.textContent = text;
+      hint.classList.toggle("hidden", !text);
+    }
+
+    function resize() {
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.round(innerWidth * dpr);
+      canvas.height = Math.round(innerHeight * dpr);
+      canvas.style.width = innerWidth + "px";
+      canvas.style.height = innerHeight + "px";
+      debugCanvas.width = Math.round(innerWidth * dpr);
+      debugCanvas.height = Math.round(innerHeight * dpr);
+      debugCanvas.style.width = innerWidth + "px";
+      debugCanvas.style.height = innerHeight + "px";
+      debugCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      if (gl) gl.viewport(0, 0, canvas.width, canvas.height);
+      draw();
+    }
+
+    function compile(type, source) {
+      const shader = gl.createShader(type);
+      gl.shaderSource(shader, source);
+      gl.compileShader(shader);
+      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        throw new Error(gl.getShaderInfoLog(shader));
+      }
+      return shader;
+    }
+
+    function initGl() {
+      if (!gl) {
+        showHint("当前浏览器不支持 WebGL");
+        return;
+      }
+      const vs = compile(gl.VERTEX_SHADER, `
+        attribute vec2 a_position;
+        void main() {
+          gl_Position = vec4(a_position, 0.0, 1.0);
+        }
+      `);
+      const fs = compile(gl.FRAGMENT_SHADER, `
+        precision mediump float;
+        uniform sampler2D u_texture;
+        uniform mat3 u_dstToSrc;
+        uniform vec2 u_resolution;
+        uniform float u_dpr;
+        void main() {
+          vec2 p = vec2(gl_FragCoord.x / u_dpr, (u_resolution.y - gl_FragCoord.y) / u_dpr);
+          vec3 src = u_dstToSrc * vec3(p, 1.0);
+          vec2 uv = src.xy / src.z;
+          if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+            gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+          } else {
+            gl_FragColor = texture2D(u_texture, uv);
+          }
+        }
+      `);
+      program = gl.createProgram();
+      gl.attachShader(program, vs);
+      gl.attachShader(program, fs);
+      gl.linkProgram(program);
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        throw new Error(gl.getProgramInfoLog(program));
+      }
+      gl.useProgram(program);
+      const buffer = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+        -1, -1, 1, -1, -1, 1,
+        -1, 1, 1, -1, 1, 1,
+      ]), gl.STATIC_DRAW);
+      const loc = gl.getAttribLocation(program, "a_position");
+      gl.enableVertexAttribArray(loc);
+      gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+      texture = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    }
+
+    function jet(t) {
+      t = Math.max(0, Math.min(1, t));
+      return [
+        Math.round(Math.max(0, Math.min(1, 1.5 - Math.abs(4 * t - 3))) * 255),
+        Math.round(Math.max(0, Math.min(1, 1.5 - Math.abs(4 * t - 2))) * 255),
+        Math.round(Math.max(0, Math.min(1, 1.5 - Math.abs(4 * t - 1))) * 255),
+      ];
+    }
+
+    function makeHeatTexture(data) {
+      const values = data.values || [[0]];
+      const ny = values.length;
+      const nx = values[0]?.length || 1;
+      const scale = 80;
+      const src = document.createElement("canvas");
+      src.width = nx * scale;
+      src.height = ny * scale;
+      const ctx = src.getContext("2d");
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, src.width, src.height);
+      const vmax = (data.intensity_range?.max ?? 1) || 1;
+      for (let iy = 0; iy < ny; iy++) {
+        for (let ix = 0; ix < nx; ix++) {
+          const v = values[iy][ix];
+          if (v == null || Number.isNaN(v)) continue;
+          const [r, g, b] = jet(v / vmax);
+          ctx.fillStyle = `rgb(${r},${g},${b})`;
+          ctx.fillRect(ix * scale, (ny - 1 - iy) * scale, scale, scale);
+        }
+      }
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src);
+    }
+
+    function solveHomography(dstPoints) {
+      const src = [[0, 0], [1, 0], [1, 1], [0, 1]];
+      const a = [];
+      for (let i = 0; i < 4; i++) {
+        const [x, y] = dstPoints[i];
+        const [u, v] = src[i];
+        a.push([x, y, 1, 0, 0, 0, -u * x, -u * y, u]);
+        a.push([0, 0, 0, x, y, 1, -v * x, -v * y, v]);
+      }
+      for (let col = 0; col < 8; col++) {
+        let pivot = col;
+        for (let row = col + 1; row < 8; row++) {
+          if (Math.abs(a[row][col]) > Math.abs(a[pivot][col])) pivot = row;
+        }
+        [a[col], a[pivot]] = [a[pivot], a[col]];
+        const div = a[col][col] || 1;
+        for (let j = col; j < 9; j++) a[col][j] /= div;
+        for (let row = 0; row < 8; row++) {
+          if (row === col) continue;
+          const factor = a[row][col];
+          for (let j = col; j < 9; j++) a[row][j] -= factor * a[col][j];
+        }
+      }
+      const h = a.map(row => row[8]);
+      return new Float32Array([
+        h[0], h[3], h[6],
+        h[1], h[4], h[7],
+        h[2], h[5], 1,
+      ]);
+    }
+
+    function scaledPoints(config) {
+      if (!config || !Array.isArray(config.dst_points) || config.dst_points.length !== 4) {
+        return null;
+      }
+      const sx = innerWidth / (config.viewport_width || innerWidth);
+      const sy = innerHeight / (config.viewport_height || innerHeight);
+      return config.dst_points.map(([x, y]) => [x * sx, y * sy]);
+    }
+
+    function draw() {
+      if (!gl || !program || !texture || !calibration) return;
+      const pts = scaledPoints(calibration);
+      if (!pts) {
+        gl.clearColor(0, 0, 0, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        return;
+      }
+      gl.useProgram(program);
+      gl.viewport(0, 0, canvas.width, canvas.height);
+      gl.uniform2f(gl.getUniformLocation(program, "u_resolution"), canvas.width, canvas.height);
+      gl.uniform1f(gl.getUniformLocation(program, "u_dpr"), window.devicePixelRatio || 1);
+      gl.uniformMatrix3fv(gl.getUniformLocation(program, "u_dstToSrc"), false, solveHomography(pts));
+      gl.clearColor(0, 0, 0, 1);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+      drawDebug();
+    }
+
+    function interpPoint(pts, u, v) {
+      const top = [
+        pts[0][0] * (1 - u) + pts[1][0] * u,
+        pts[0][1] * (1 - u) + pts[1][1] * u,
+      ];
+      const bottom = [
+        pts[3][0] * (1 - u) + pts[2][0] * u,
+        pts[3][1] * (1 - u) + pts[2][1] * u,
+      ];
+      return [
+        top[0] * (1 - v) + bottom[0] * v,
+        top[1] * (1 - v) + bottom[1] * v,
+      ];
+    }
+
+    function drawDebug() {
+      debugCtx.clearRect(0, 0, innerWidth, innerHeight);
+      if (!debugEnabled || !calibration) return;
+      const pts = scaledPoints(calibration);
+      if (!pts) return;
+      const nx = latestData?.nx || 10;
+      const ny = latestData?.ny || 6;
+
+      debugCtx.save();
+      debugCtx.fillStyle = "rgba(56,189,248,.10)";
+      debugCtx.beginPath();
+      debugCtx.moveTo(pts[0][0], pts[0][1]);
+      for (let i = 1; i < 4; i++) debugCtx.lineTo(pts[i][0], pts[i][1]);
+      debugCtx.closePath();
+      debugCtx.fill();
+
+      debugCtx.strokeStyle = "#38bdf8";
+      debugCtx.lineWidth = 3;
+      debugCtx.stroke();
+
+      debugCtx.strokeStyle = "rgba(250,204,21,.82)";
+      debugCtx.lineWidth = 1;
+      for (let ix = 1; ix < nx; ix++) {
+        const u = ix / nx;
+        const a = interpPoint(pts, u, 0);
+        const b = interpPoint(pts, u, 1);
+        debugCtx.beginPath();
+        debugCtx.moveTo(a[0], a[1]);
+        debugCtx.lineTo(b[0], b[1]);
+        debugCtx.stroke();
+      }
+      for (let iy = 1; iy < ny; iy++) {
+        const v = iy / ny;
+        const a = interpPoint(pts, 0, v);
+        const b = interpPoint(pts, 1, v);
+        debugCtx.beginPath();
+        debugCtx.moveTo(a[0], a[1]);
+        debugCtx.lineTo(b[0], b[1]);
+        debugCtx.stroke();
+      }
+
+      pts.forEach((p, i) => {
+        debugCtx.fillStyle = "#facc15";
+        debugCtx.beginPath();
+        debugCtx.arc(p[0], p[1], 7, 0, Math.PI * 2);
+        debugCtx.fill();
+        debugCtx.fillStyle = "#fff";
+        debugCtx.font = "14px Segoe UI, Microsoft YaHei, sans-serif";
+        debugCtx.fillText(String(i + 1), p[0] + 10, p[1] - 10);
+      });
+
+      debugCtx.fillStyle = "rgba(0,0,0,.76)";
+      debugCtx.fillRect(14, 14, 520, 92);
+      debugCtx.fillStyle = "#e5e7eb";
+      debugCtx.font = "13px Consolas, monospace";
+      debugCtx.fillText(`current css: ${innerWidth} x ${innerHeight}  dpr: ${window.devicePixelRatio || 1}`, 26, 38);
+      debugCtx.fillText(`calibrated: ${calibration.viewport_width || "?"} x ${calibration.viewport_height || "?"}  dpr: ${calibration.device_pixel_ratio || "?"}`, 26, 60);
+      debugCtx.fillText(`grid: ${nx} x ${ny}  points are scaled to current css viewport`, 26, 82);
+      debugCtx.restore();
+    }
+
+    async function loadCalibration() {
+      const resp = await fetch(CALIBRATION_API + "?t=" + Date.now());
+      if (!resp.ok) throw new Error("请先完成四点标定");
+      calibration = await resp.json();
+      showHint("");
+    }
+
+    async function tick() {
+      try {
+        if (!calibration) await loadCalibration();
+        const resp = await fetch(HEATMAP_API + "?t=" + Date.now());
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({}));
+          throw new Error(err.error || resp.statusText);
+        }
+        const data = await resp.json();
+        latestData = data;
+        const mtime = data.source_ground_top_mask_mtime || data.source_3d_mtime || data.generated_at;
+        if (mtime !== lastMtime) {
+          lastMtime = mtime;
+          makeHeatTexture(data);
+        }
+        draw();
+      } catch (err) {
+        showHint(err.message);
+      }
+    }
+
+    initGl();
+    addEventListener("resize", resize);
+    addEventListener("keydown", (event) => {
+      if (event.key.toLowerCase() === "c") location.href = "/projector_calibrate.html";
+      if (event.key.toLowerCase() === "d") {
+        debugEnabled = !debugEnabled;
+        draw();
+      }
+    });
+    resize();
+    tick();
+    setInterval(tick, REFRESH_MS);
+  </script>
+</body>
+</html>

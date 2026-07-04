@@ -1,72 +1,189 @@
-# gnn3d+2d：3D 热力 → 2D 观测热力 → 可视化
+# gnn3d+2d
 
-## 目录
+This project converts an `occupied_space.json` scene into a 3D heatmap, projects that 3D heatmap into a 2D heatmap, then masks the 2D heatmap with live `ground_top_observations_live.json` observations for display and projection.
 
-| 目录 | 说明 |
+## Data Flow
+
+```text
+../out/occupied_space.json
++ street elements.csv
+    -> output/occupied_space.heatmap.json
+    -> output_2d/2d_heatmap.json
+    -> output_2d/2d_heatmap.html
+    -> /api/live/heatmap2d
+    -> projector_live.html
+```
+
+The four-corner projection page uses the same masked 2D heatmap API and applies `projection_calibration.json` in the browser.
+
+## Inputs
+
+All default paths are defined in `config_paths.py`.
+
+| Path | Role |
 |------|------|
-| `output/` | **3D 输出**（`occupied_space.heatmap.json`，用于实体留白） |
-| `outputs/` | **2D 输入**（`ground_top_observations_live.json`） |
-| `output_2d/` | **2D 输出**（JSON + HTML 快照） |
+| `../out/occupied_space.json` | Main 3D scene input. |
+| `street elements.csv` | Street-element catalog used by 3D heatmap prediction. |
+| `../out/ground_top_observations_live.json` | Observation mask input. Observed cells are hidden in the final 2D heatmap. |
+| `projection_calibration.json` | Four-corner projector calibration, written by `projector_calibrate.html`. |
 
-## 2D 输入格式
+## Outputs
 
-默认读取：
+| Path | Role |
+|------|------|
+| `output/occupied_space.heatmap.json` | 3D heatmap output, also sent to the local API if available. |
+| `output_2d/2d_heatmap.json` | Final masked 2D heatmap JSON. |
+| `output_2d/2d_heatmap.html` | Final masked 2D heatmap HTML snapshot. |
 
+No raw unmasked 2D file is written by default.
+
+## Mask Rule
+
+The 2D heatmap is first generated from `output/occupied_space.heatmap.json`.
+
+Then `ground_top_observations_live.json` is used as a mask:
+
+```text
+entity occupied cell -> null
+observed ground-top cell -> null
+other cell -> keep 3D-to-2D heatmap intensity
 ```
-outputs/ground_top_observations_live.json
-```
 
-JSON 为**观测数组**，每条例如：
+For each observation, `row` and `col` are preferred and treated as 1-based grid indices. If `row/col` are missing, `center_x_mm/center_y_mm` are converted to a cell using the 400 mm grid size.
+
+## Ground-Top Observation Format
+
+Example:
 
 ```json
 {
-  "id": 4,
-  "center_x_mm": 1957.82,
-  "center_y_mm": 403.71,
-  "center_z_mm": -59.29,
+  "id": 49,
+  "center_x_mm": 932.93,
+  "center_y_mm": 599.16,
+  "center_z_mm": 901.69,
   "row": 1,
-  "col": 4,
-  "level": 0,
-  "orientation": "0,1",
-  "source": "cam_b",
-  "serial_number": 37807506
+  "col": 2,
+  "level": 2,
+  "orientation": "1,0",
+  "source": "cam_a",
+  "serial_number": 34407890
 }
 ```
 
-- **row / col**：1-based 网格坐标（10×6，400mm/格）
-- 按 `row/col` 统计每格观测次数并归一化为热力
-- 若存在 3D 热力 JSON，实体占据格仍**留白**
+Grid settings:
 
-## 用法
+```text
+columns x rows: 10 x 6
+cell size: 400 mm x 400 mm
+area: 4.0 m x 2.4 m
+```
+
+## Usage
+
+Run the full pipeline:
 
 ```powershell
-# 仅 2D（读 outputs/ground_top_observations_live.json）
+python entity_to_heatmap.py
+```
+
+This reads:
+
+```text
+../out/occupied_space.json
+street elements.csv
+../out/ground_top_observations_live.json
+```
+
+and writes:
+
+```text
+output/occupied_space.heatmap.json
+output_2d/2d_heatmap.json
+output_2d/2d_heatmap.html
+```
+
+Skip 3D prediction and regenerate only masked 2D from an existing 3D heatmap:
+
+```powershell
 python entity_to_heatmap.py --only-2d
+```
 
-# 指定观测文件
-python entity_to_heatmap.py --only-2d --ground-top outputs/ground_top_observations_live.json
+Override input paths:
 
-# 实时网页（监听 outputs/ 下 JSON 变化）
+```powershell
+python entity_to_heatmap.py `
+  --input ..\out\occupied_space.json `
+  --elements-csv "street elements.csv" `
+  --ground-top-mask ..\out\ground_top_observations_live.json `
+  --output output\occupied_space.heatmap.json `
+  --output-2d output_2d\2d_heatmap.json
+```
+
+Start the live viewer:
+
+```powershell
 python entity_to_heatmap.py --only-2d --serve
-
-# 旧模式：从 3D heatmap.json 投影 2D
-python entity_to_heatmap.py --only-2d --from-3d
 ```
 
-## 实时网址
+The live server watches both:
 
+```text
+output/occupied_space.heatmap.json
+../out/ground_top_observations_live.json
 ```
+
+When either changes, it regenerates:
+
+```text
+output_2d/2d_heatmap.json
+output_2d/2d_heatmap.html
+```
+
+## Live URLs
+
+```text
 http://127.0.0.1:8766/heatmap_2d_live.html
+http://127.0.0.1:8766/projector_calibrate.html
+http://127.0.0.1:8766/projector_live.html
 ```
 
-`outputs/ground_top_observations_live.json` 更新后，网页约 1 秒自动刷新。
+API endpoints:
 
-## 2D 网格参数
+```text
+/api/live/heatmap2d
+/api/live/projection-calibration
+```
 
-- 网格：**10 × 6** 格（col × row）
-- 格大小：**400mm × 400mm**
-- 范围：**4.0m × 2.4m**
+`projector_live.html` reads `/api/live/heatmap2d`, so the projected image follows the masked 2D heatmap in real time.
 
-## 离线快照
+## Projection Calibration
 
-双击 `output_2d/ground_top_observations_live.heatmap2d.html`
+Start the live server, then open:
+
+```text
+http://127.0.0.1:8766/projector_calibrate.html
+```
+
+Click the projected canvas corners in this order:
+
+```text
+top-left -> top-right -> bottom-right -> bottom-left
+```
+
+Save the calibration. The result is written to:
+
+```text
+projection_calibration.json
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8766/projector_live.html
+```
+
+The browser applies the four-corner transform to the current masked 2D heatmap.
+
+## Notes
+
+- If the local API at `127.0.0.1:8000` is not running, 3D API sync may fail, but local 3D/2D file generation still works.

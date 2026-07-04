@@ -4,30 +4,34 @@
 import os
 import time
 import subprocess
+import argparse
 from pathlib import Path
 
 SERVER_IP = "127.0.0.1"
 SERVER_PORT = 8000
 
-# 配置路径
+# ✨ 最新配置路径：根据新版 config_paths 映射到根目录的 out 文件夹
 CSV_FILE = "street elements.csv"
 LIVE_JSON = "outputs/ground_top_observations_live.json"
 MODEL_PLANE_JSON = "outputs/model_plane.json"
 OCCUPIED_SPACE_JSON = "outputs/occupied_space.json"
 
+# ✨ 最新输出路径规范化
+HEATMAP_OUTPUT = "outputs/occupied_space.heatmap.json"
+HEATMAP_2D_OUTPUT = "outputs/2d_heatmap.json" 
+
 # 接口配置
-MODEL_PLANE_API_URL = f"http://{SERVER_IP}:{SERVER_PORT}/api/static/model-plane"  # ✨ 新增：步骤 1 的独立 POST 接口
+MODEL_PLANE_API_URL = f"http://{SERVER_IP}:{SERVER_PORT}/api/static/model-plane"
 LAYOUT_API_URL = f"http://{SERVER_IP}:{SERVER_PORT}/api/simulation/public-layout/current"
 HEATMAP_API_URL = f"http://{SERVER_IP}:{SERVER_PORT}/api/simulation/public-layout/current/attraction"
 
 # 假设 entity_to_heatmap.py 在下一级目录 gnn_heatmap 中
 HEATMAP_SCRIPT = Path("gnn_heatmap") / "entity_to_heatmap.py"
-HEATMAP_OUTPUT = "outputs/occupied_space.heatmap.json"
 
 
 def is_file_ready_and_complete(filepath):
     """
-    检查本地输入文件是否可以 safe 读取（防止读取到写了一半的残缺 JSON）
+    检查本地输入 file 是否可以 safe 读取（防止读取到写了一半的残缺 JSON）
     """
     path = Path(filepath)
     if not path.exists() or path.stat().st_size == 0:
@@ -46,8 +50,8 @@ def is_file_ready_and_complete(filepath):
 
 
 def run_pipeline():
-    # 确保输出目录存在
-    Path("outputs").mkdir(parents=True, exist_ok=True)
+    # 确保输出目录 out 存在
+    Path("out").mkdir(parents=True, exist_ok=True)
     
     # 导入前两个脚本的处理函数
     try:
@@ -58,7 +62,7 @@ def run_pipeline():
         return
 
     print("🚀 实时空间集成流水线控制脚本已启动...")
-    print(f"  - 基础平面模型 POST 接口: {MODEL_PLANE_API_URL}") # ✨ 新增打印
+    print(f"  - 基础平面模型 POST 接口: {MODEL_PLANE_API_URL}")
     print(f"  - 布局同步接口: {LAYOUT_API_URL}")
     print(f"  - 热力同步接口: {HEATMAP_API_URL}\n")
     
@@ -82,8 +86,6 @@ def run_pipeline():
                     last_processed_mtime = current_mtime # 更新时间戳记录
             
             if not should_process_pipeline:
-                # 💡 核心修改：如果步骤1不需要执行，直接打印一行提示，然后静默等待下一个 0.5 秒
-                # 这样可以完全跳过后面的 步骤2 和 步骤3
                 print("⏳ [Pipeline] 本地观察文件无变化，全链路静默跳过...", end="\r")
                 time.sleep(0.5)
                 continue
@@ -92,7 +94,6 @@ def run_pipeline():
             print("\n--- ⚡ 检测到数据更新，开始全链路同步与计算 ---")
             
             print("[Step 1/3] 🔄 正在解析本地观察文件并自动 POST 基础平面模型...")
-            # ✨ 核心修改：这里将 MODEL_PLANE_API_URL 作为第四个参数传给步骤 1 
             process_street_elements(CSV_FILE, LIVE_JSON, MODEL_PLANE_JSON, api_url=MODEL_PLANE_API_URL)
 
             # ----------------------------------------------------------------
@@ -115,33 +116,36 @@ def run_pipeline():
             save_and_upload_layout(layout_data, occupied_cells, OCCUPIED_SPACE_JSON, LAYOUT_API_URL)
 
             # ----------------------------------------------------------------
-            # 步骤 3: 调用 entity_to_heatmap.py 生成热力图（包含3D与新版2D）并自动上传
+            # 步骤 3: 适配最新子脚本的 3D -> 2D 遮罩处理流程
             # ----------------------------------------------------------------
-            print("[Step 3/3] 🔥 正在生成3D/2D热力图、计算 SVI 并自动推送至服务器...")
+            print("[Step 3/3] 🔥 正在由 occupied_space 计算 3D 热力，并投影叠加 2D 遮罩...")
             if not HEATMAP_SCRIPT.exists():
                 print(f"  ❌ 错误: 未找到热力图生成脚本: {HEATMAP_SCRIPT}")
             else:
                 script_cwd = HEATMAP_SCRIPT.parent
 
-                # ✨ 核心修改：显式将本地的 LIVE_JSON 转为绝对路径，通过 --ground-top 传给子脚本
-                # 确保子脚本在切换工作目录（cwd）后，依然能正确读取到根目录的 2D 观测输入
+                # ✨ 核心适配：依据最新的 argparse 定义重构命令数组
                 cmd = [
                     "python", HEATMAP_SCRIPT.name,
+                    # 1. 传入 occupied_space.json 计算 3D 热力图
                     "--input", str(Path(OCCUPIED_SPACE_JSON).resolve()),
                     "--elements-csv", str(Path(CSV_FILE).resolve()),
                     "--output", str(Path(HEATMAP_OUTPUT).resolve()),
-                    "--ground-top", str(Path(LIVE_JSON).resolve())  # 🌟 新增这一行
+                    
+                    # 2. ✨ 参数名更新：原先的 --ground-top 变更为 --ground-top-mask
+                    "--ground-top-mask", str(Path(LIVE_JSON).resolve()),
+                    
+                    # 3. 传入最终生成的 2D 遮罩热力图路径 (子脚本会自动先算3D再生成带遮罩的2D)
+                    "--output-2d", str(Path(HEATMAP_2D_OUTPUT).resolve())
                 ]
                 
                 # 执行子进程
                 result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=script_cwd)
                 
                 if result.returncode == 0:
-                    print(f"  ✨ 本轮流水线处理全链路成功！最终3D与2D热力生成并上传完毕。")
-                    # 如果需要调试，可以取消下面这行的注释来查看 entity_to_heatmap.py 的详细打印（包含 SVI、有效网格等信息）
-                    # print(result.stdout)
+                    print(f"  ✨ 本轮流水线处理全链路成功！3D与2D遮罩热力已生成。")
                 else:
-                    print(f"  ⚠️ 警告: 步骤 3 热力图生成或上传失败。")
+                    print(f"  ⚠️ 警告: 步骤 3 热力图遮罩生成失败。")
                     print(f"  错误详情: {result.stderr.strip()}")
                     
         except Exception as e:
@@ -152,4 +156,25 @@ def run_pipeline():
 
 
 if __name__ == "__main__":
+    # 解析 --serve 指令
+    parser = argparse.ArgumentParser(description="实时空间集成流水线控制中心")
+    parser.add_argument("--serve", action="store_true", help="启动 2D 实时热力图可视化 Web 服务器")
+    args = parser.parse_args()
+
+    if args.serve:
+        try:
+            print("\n🌐 [指令激活] 正在后台单独启动 2D 实时可视化 Web 服务器...")
+            # ✨ 适配最新版启动逻辑
+            init_cmd = [
+                "python", "gnn_heatmap/entity_to_heatmap.py", 
+                "--only-2d", 
+                "--serve"
+            ]
+            # 后台挂起服务，不阻塞后面的高频 while 循环
+            subprocess.Popen(init_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            print("✨ 2D 服务器已成功挂载服务，正在拉起可视化网页...\n")
+        except Exception as e:
+            print(f"⚠️ 启动 Web 服务器失败 (可能端口已被占用): {e}")
+
+    # 启动高频流水线
     run_pipeline()

@@ -1,0 +1,22 @@
+{
+  "parent_x": 14,
+  "parent_y": 10,
+  "width": 10,
+  "height": 6,
+  "depth": 6,
+  "base_attraction": 0.54,
+  "cells": [
+    {
+      "x": 2,
+      "y": 1,
+      "z": 0,
+      "type": "outdoor_seating"
+    },
+    {
+      "x": 2,
+      "y": 1,
+      "z": 1,
+      "type": "outdoor_seating"
+    }
+  ]
+}

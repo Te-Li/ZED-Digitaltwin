@@ -1,0 +1,26 @@
+{
+  "enabled": true,
+  "viewport_width": 1699,
+  "viewport_height": 935,
+  "device_pixel_ratio": 1.5,
+  "point_order": "top_left,top_right,bottom_right,bottom_left",
+  "dst_points": [
+    [
+      254,
+      356
+    ],
+    [
+      1603,
+      307
+    ],
+    [
+      1621,
+      716
+    ],
+    [
+      267,
+      759
+    ]
+  ],
+  "updated_at": "2026-07-03T03:15:44.016Z"
+}

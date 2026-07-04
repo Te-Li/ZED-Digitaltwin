@@ -14,7 +14,9 @@ def load_shop_elements_from_api(api_url):
         if not resp.ok:
             print(f"错误: 无法获取类型吸引力规则。状态码: {resp.status_code}, 原因: {resp.text}")
             return ranges
-        data = resp.json()
+        # --- 【修改点】先获取完整的 JSON 字典，再提取 type_attractions 列表 ---
+        res_json = resp.json()
+        data = res_json.get('type_attractions', [])
     except Exception as e:
         print(f"API 请求失败(GET 规则): {e}")
         return ranges
@@ -25,15 +27,32 @@ def load_shop_elements_from_api(api_url):
         return ranges
         
     for row in data:
-        range_str = row.get('id_range', '').strip('[]"')
-        if ',' in range_str:
-            try:
-                min_id, max_id = map(int, range_str.split(','))
-                type_name = row.get('英文', '').strip()
-                attraction = row.get('attraction')  # 获取 attraction 属性
-                ranges.append((min_id, max_id, type_name, attraction))
-            except ValueError:
-                continue
+        range_data = row.get('id_range')
+        if range_data is None:
+            continue
+            
+        try:
+            # --- 核心修复：兼容列表和字符串两种情况 ---
+            if isinstance(range_data, list):
+                if len(range_data) >= 2:
+                    min_id, max_id = int(range_data[0]), int(range_data[1])
+                else:
+                    continue
+            elif isinstance(range_data, str):
+                range_str = range_data.strip('[]"')
+                if ',' in range_str:
+                    min_id, max_id = map(int, range_str.split(','))
+                else:
+                    continue
+            else:
+                continue # 其他未知类型直接跳过
+
+            type_name = row.get('英文', '').strip()
+            attraction = row.get('attraction')  # 获取 attraction 属性
+            ranges.append((min_id, max_id, type_name, attraction))
+            
+        except (ValueError, IndexError):
+            continue
                 
     return ranges
 

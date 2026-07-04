@@ -58,7 +58,7 @@ def _entity_footprint_mask(pack: dict[str, Any], nx: int, ny: int) -> np.ndarray
         if 0 <= ix < nx and 0 <= iy < ny:
             mask[iy, ix] = True
 
-    return mask
+    return np.zeros((ny, nx), dtype=bool)
 
 
 def _coord_to_cell(x: float, y: float, cell_m: float, nx: int, ny: int) -> Tuple[int, int] | None:
@@ -140,7 +140,7 @@ def project_heatmap_3d_to_2d(
     cell_m = options.cell_m
 
     entity_mask = _entity_footprint_mask(pack, nx, ny) if options.mask_entity_cells else np.zeros((ny, nx), dtype=bool)
-
+    print(entity_mask, "llllllll")
     grid = np.zeros((ny, nx), dtype=np.float64)
     count = np.zeros((ny, nx), dtype=np.int32)
     samples = _collect_voxel_samples(pack, entity_mask=entity_mask, options=options)
